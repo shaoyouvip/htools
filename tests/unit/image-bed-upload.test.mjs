@@ -425,8 +425,8 @@ test("admin service settings and all three image fields reuse the shared upload 
     ]);
 
   assert.equal((admin.match(/<AdminImageUploadButton\b/g) ?? []).length, 3);
-  assert.match(card, /getAdminLoadingProps\(loading\)/);
-  assert.match(card, /<AdminSkeletonLines loading=\{loading\} \/>/);
+  assert.match(card, /getAdminLoadingProps\(loading && !loadError\)/);
+  assert.match(card, /<AdminSkeletonLines loading=\{loading && !loadError\} \/>/);
   assert.doesNotMatch(card, /AdminSettingsFieldSkeleton/);
   for (const type of ["default", "index", "origin", "short"]) {
     assert.match(card, new RegExp(`\\b${type}\\b`));

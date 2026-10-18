@@ -9,11 +9,14 @@ import {
   loadProxySettings as readProxySettings,
   loadSiteSettings as readSiteSettings
 } from "./public-api";
+import { CATEGORY_ICON_SCOPES, normalizeCategoryIcon, normalizeCategoryIconSettings } from "./category-icon-settings";
 import type {
   AdminCategoryAction,
   AdminCategoryActionResult,
   AdminCategoryScope,
   AdminCategorySettings,
+  CategoryIcon,
+  CategoryIconSettings,
   AdminAiResult,
   AdminAiDocumentResult,
   AdminAiSettings,
@@ -220,7 +223,10 @@ type TelegramDeleteResponse = {
 
 type AdminCategorySettingsResponse = {
   settings: AdminCategorySettings;
+  icons?: CategoryIconSettings;
 };
+
+type CategoryIconsResponse = { icons: CategoryIconSettings };
 
 type AdminCategoryActionResponse = AdminCategoryActionResult;
 
@@ -237,35 +243,39 @@ export async function loadAdminTools(token: string): Promise<Tool[]> {
 
 export async function loadArticlePreview(
   slug: string,
-  token: string
+  token: string,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {}
 ): Promise<Article> {
-  const response = await fetch(
+  const data = await requestJsonWithTimeout<ArticleResponse>(
     `/api/admin/articles/preview/${encodeURIComponent(slug)}`,
     {
+      signal: options.signal,
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${token}`
       }
-    }
+    },
+    { timeoutMs: options.timeoutMs }
   );
-  const data = await readJson<ArticleResponse>(response);
   return data.article;
 }
 
 export async function loadContentItemArticlePreview(
   id: string,
-  token: string
+  token: string,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {}
 ): Promise<Article> {
-  const response = await fetch(
+  const data = await requestJsonWithTimeout<ArticleResponse>(
     `/api/admin/content-items/${encodeURIComponent(id)}/preview`,
     {
+      signal: options.signal,
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${token}`
       }
-    }
+    },
+    { timeoutMs: options.timeoutMs }
   );
-  const data = await readJson<ArticleResponse>(response);
   return data.article;
 }
 
@@ -594,6 +604,13 @@ export async function loadAdminCategorySettings(
   token: string,
   options: { signal?: AbortSignal; timeoutMs?: number } = {}
 ): Promise<AdminCategorySettings> {
+  return (await loadAdminCategoryConfiguration(token, options)).settings;
+}
+
+export async function loadAdminCategoryConfiguration(
+  token: string,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {}
+): Promise<{ settings: AdminCategorySettings; icons: CategoryIconSettings }> {
   const data = await requestJsonWithTimeout<AdminCategorySettingsResponse>(
     "/api/admin/categories",
     {
@@ -605,7 +622,55 @@ export async function loadAdminCategorySettings(
     },
     { timeoutMs: options.timeoutMs }
   );
-  return data.settings;
+  if (!CATEGORY_ICON_SCOPES.every((scope) =>
+    Array.isArray(data?.settings?.[scope]) && data.settings[scope].every((category) => typeof category === "string")
+  ) || (data.icons !== undefined && (!data.icons || typeof data.icons !== "object" || Array.isArray(data.icons)))) {
+    throw new Error("Invalid category response.");
+  }
+  return { settings: data.settings, icons: normalizeCategoryIconSettings(data.icons) };
+}
+
+export async function loadAdminCategoryIcons(
+  token: string,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {}
+): Promise<CategoryIconSettings> {
+  const data = await requestJsonWithTimeout<CategoryIconsResponse>("/api/admin/category-icons", {
+    signal: options.signal,
+    headers: { Accept: "application/json", Authorization: `Bearer ${token}` }
+  }, { timeoutMs: options.timeoutMs });
+  if (!data?.icons || typeof data.icons !== "object" || Array.isArray(data.icons)) {
+    throw new Error("Invalid category icon response.");
+  }
+  return normalizeCategoryIconSettings(data.icons);
+}
+
+export async function saveAdminCategoryIcon(
+  token: string,
+  scope: AdminCategoryScope,
+  category: string,
+  icon: CategoryIcon | null
+): Promise<CategoryIconSettings> {
+  const targetIcon = normalizeCategoryIcon(icon);
+  if (icon !== null && !targetIcon) throw new Error("Invalid category icon.");
+  const targetCategory = category.trim();
+  return confirmTimedOutWrite({
+    write: async () => {
+      const data = await requestJsonWithTimeout<CategoryIconsResponse>("/api/admin/category-icons", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ scope, category: targetCategory, icon: targetIcon })
+      });
+      if (!data?.icons || typeof data.icons !== "object" || Array.isArray(data.icons)) {
+        throw new Error("Invalid category icon response.");
+      }
+      return normalizeCategoryIconSettings(data.icons);
+    },
+    confirm: () => loadAdminCategoryIcons(token, { timeoutMs: TIMED_OUT_WRITE_CONFIRM_TIMEOUT_MS }),
+    matches: (current) => {
+      const actual = current[scope][targetCategory] ?? null;
+      return actual?.type === targetIcon?.type && actual?.value === targetIcon?.value;
+    }
+  });
 }
 
 export async function saveAdminCategorySettings(

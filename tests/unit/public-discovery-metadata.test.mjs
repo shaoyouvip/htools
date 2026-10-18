@@ -30,6 +30,12 @@ test("public discovery outputs share one article URL, image, and date normalizer
   assert.match(helperSource, /hasTime && !hasTimezone/);
 });
 
+test("public feeds use the project logo only when no custom site icon is stored", () => {
+  assert.match(helperSource, /const DEFAULT_PUBLIC_LOGO_PATH = "\/htools-logo\.png"/);
+  assert.match(helperSource, /iconUrl: site\.iconUrl \|\| DEFAULT_PUBLIC_LOGO_PATH/);
+  assert.match(helperSource, /iconUrl: DEFAULT_PUBLIC_LOGO_PATH/);
+});
+
 test("RSS exposes canonical article URLs, covers, and modification dates", () => {
   assert.match(rssSource, /createPublicArticleMetadata\(request\.url, article\)/);
   assert.match(rssSource, /xmlns:media="http:\/\/search\.yahoo\.com\/mrss\/"/);

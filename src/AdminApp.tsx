@@ -1,11 +1,14 @@
-import { ArrowDownUp, ArrowRightLeft, ArrowUp, ArrowUpRight, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, Circle, Eraser, FileText, LogOut, PanelLeft, Plus, RefreshCw, Rss, Search, Send, Settings, ShieldCheck, Star, SquarePen, Tags, Trash2, Upload, Wand2, Wrench, X } from "lucide-react";
+import { ArrowDownUp, ArrowRightLeft, ArrowUp, ArrowUpRight, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, Eraser, FileText, LogOut, PanelLeft, Plus, RefreshCw, Rss, Search, Send, Settings, ShieldCheck, Star, SquarePen, Trash2, Upload, Wrench, X } from "lucide-react";
 import { ChangeEvent, CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { applyAdminCategoryAction, checkLinks, createArticle, createContentSource, createTool, deleteArticle, deleteContentSource, deleteTelegramPush, deleteTool, exportBackupData, exportToolSourceData, importTools, loadAdminAiSettings, loadAdminArticle, loadAdminArticles, loadAdminAuthConfig, loadAdminCategorySettings, loadAdminTools, loadContentItemArticlePreview, loadContentItems, loadContentSources, loadProxySettings, loadSiteConfiguration, loadSiteSettings, loadSourceSettings, loadTelegramMessage, loadTelegramPushRecords, loadTelegramSettings, loadTelegramSource, login, patchSiteSettings, resetFactorySettings, restoreBackupData, saveAdminAiSettings, saveAdminCategorySettings, saveProxySettings, saveSourceSettings, saveTelegramMessage, sendTelegramMessage, syncContentSource, updateArticle, updateArticlePublished, updateContentSource, convertContentItemToArticle, previewContentSource, updateTelegramMessage, updateTool, type AdminAuthConfig } from "./admin-api";
+import { applyAdminCategoryAction, checkLinks, createArticle, createContentSource, createTool, deleteArticle, deleteContentSource, deleteTelegramPush, deleteTool, exportBackupData, exportToolSourceData, importTools, loadAdminAiSettings, loadAdminArticle, loadAdminArticles, loadAdminAuthConfig, loadAdminCategoryConfiguration, loadAdminTools, loadContentItemArticlePreview, loadContentItems, loadContentSources, loadProxySettings, loadSiteConfiguration, loadSiteSettings, loadSourceSettings, loadTelegramMessage, loadTelegramPushRecords, loadTelegramSettings, loadTelegramSource, login, patchSiteSettings, resetFactorySettings, restoreBackupData, saveAdminAiSettings, saveAdminCategoryIcon, saveAdminCategorySettings, saveProxySettings, saveSourceSettings, saveTelegramMessage, sendTelegramMessage, syncContentSource, updateArticle, updateArticlePublished, updateContentSource, convertContentItemToArticle, previewContentSource, updateTelegramMessage, updateTool, type AdminAuthConfig } from "./admin-api";
+import { createEmptyCategoryIconSettings, isEditableCategoryIconCategory, type CategoryIcon as CategoryIconValue, type CategoryIconSettings } from "./category-icon-settings";
+import { CategoryIcon } from "./components/CategoryIcon";
+import { AdminCategoryIconDialog } from "./components/AdminCategoryIconDialog";
 import { translations, type Locale, type Messages } from "./i18n";
 import { normalizeProxyBaseUrl, normalizeProxyMode, normalizeProxyScope, proxifyUrl } from "./proxy";
 import { ADMIN_AI_MODELS, type AdminAiSettings, type AdminCategoryAction, type AdminCategoryScope, type AdminCategorySettings, type Article, type ArticleInput, type ArticleSummary, type ContentItemSummary, type ContentSource, type ContentSourceInput, type ContentSyncResponse, type FeedPreview, type FooterSettings, type HomeHeroContent, type LinkCheckResult, type ProxySettings, type HtoolsBackup, type SiteSettings, type SourceSettings, type TelegramMessage, type TelegramPushRecord, type TelegramResourceType, type TelegramSettings, type Tool, type ToolImportMode, type ToolInput, type UmamiSettings } from "./types";
-import { DEFAULT_FOOTER_SETTINGS, DEFAULT_HOME_HERO_SETTINGS, DEFAULT_SITE_SETTINGS, formatFooterJson, getEditableSiteSettings, getFooterFormValues, getHomeHeroSettings, getLocalizedErrorMessage, getSiteDisplayName, getSiteFooterSettings, getSourceErrorMessage, readSiteIconFile } from "./site-helpers";
+import { DEFAULT_FOOTER_SETTINGS, DEFAULT_HOME_HERO_SETTINGS, DEFAULT_SITE_SETTINGS, formatFooterJson, getEditableSiteSettings, getFooterFormValues, getHomeHeroSettings, getLocalizedErrorMessage, getSiteDisplayName, getSiteFooterSettings, getSourceErrorMessage, isSiteIconDataUrl, readSiteIconFile } from "./site-helpers";
 import {
   cleanArticleDisplayText,
   getArticleDisplayTitle,
@@ -29,9 +32,8 @@ import {
 } from "./tool-helpers";
 import {
   SiteBrandIdentity,
-  SkeletonVisibility,
-  addSiteIconRetryParam,
-  isSiteIconDataUrl
+  SiteBrandMark,
+  SkeletonVisibility
 } from "./shared-ui";
 import { useLoadingSkeleton } from "./useLoadingSkeleton";
 import { useOverlayFocusManagement } from "./useOverlayFocusManagement";
@@ -67,7 +69,7 @@ import {
   getDialogReturnFocusTarget,
   rememberNextDialogReturnFocus
 } from "./components/AdminDialog";
-import { AdminEmptyState, AdminInitialLoadError } from "./components/AdminPanelStates";
+import { AdminEmptyState, AdminInitialLoadError, AdminSettingsLoadError } from "./components/AdminPanelStates";
 import { AdminArticleCard, AdminToolCard } from "./components/admin-cards";
 import { AdminTelegramPushButton } from "./components/AdminTelegramPushButton";
 import { AdminCardActionMenu } from "./components/AdminCardActionMenu";
@@ -168,6 +170,7 @@ const MarkdownContent = lazy(() => import("./components/MarkdownContent"));
 function getContentFeedErrorMessage(
   error: unknown,
   contentText: ReturnType<typeof getContentFlowText>,
+  t: Messages,
   fallback: string
 ) {
   const message = error instanceof Error ? error.message : "";
@@ -195,7 +198,7 @@ function getContentFeedErrorMessage(
   }
   const status = message.match(/^Feed request failed with status (\d+)\.$/)?.[1];
   if (status) return contentText.feedRequestFailed(status);
-  return message || fallback;
+  return getLocalizedErrorMessage(error, t, fallback);
 }
 
 function formatAdminDocumentTitle(
@@ -656,6 +659,15 @@ export default function AdminApp({
     useState<Record<string, number>>({});
   const [adminCategorySettings, setAdminCategorySettings] =
     useState<AdminCategorySettings>(initialAdminCategorySettings);
+  const [adminCategoryIcons, setAdminCategoryIcons] =
+    useState<CategoryIconSettings>(createEmptyCategoryIconSettings);
+  const [adminCategoryIconsReady, setAdminCategoryIconsReady] = useState(false);
+  const [editingCategoryIcon, setEditingCategoryIcon] = useState<{
+    scope: AdminCategoryScope;
+    category: string;
+  } | null>(null);
+  const [categoryIconSaving, setCategoryIconSaving] = useState(false);
+  const [categoryIconError, setCategoryIconError] = useState("");
   const [editingTool, setEditingTool] = useState<Tool | null>(null);
   const [telegramSettings, setTelegramSettings] = useState<TelegramSettings>({
     available: false,
@@ -877,6 +889,8 @@ export default function AdminApp({
   const writeActionLocksRef = useRef(new Set<string>());
   const adminCategorySettingsRef = useRef(adminCategorySettings);
   const adminCategoryLoadRequestRef = useRef(0);
+  const categoryIconSaveRef = useRef(false);
+  const categoryIconGenerationRef = useRef(0);
   const adminCategorySaveGenerationRef = useRef<Record<AdminCategoryScope, number>>({
     tools: 0,
     articles: 0,
@@ -1387,8 +1401,17 @@ export default function AdminApp({
     const requestId = adminCategoryLoadRequestRef.current + 1;
     adminCategoryLoadRequestRef.current = requestId;
     const generations = { ...adminCategorySaveGenerationRef.current };
+    const iconGeneration = categoryIconGenerationRef.current;
     try {
-      const settings = await loadAdminCategorySettings(token);
+      const { settings, icons } = await loadAdminCategoryConfiguration(token);
+      if (
+        adminCategoryLoadRequestRef.current === requestId &&
+        categoryIconGenerationRef.current === iconGeneration &&
+        !categoryIconSaveRef.current
+      ) {
+        setAdminCategoryIcons(icons);
+        setAdminCategoryIconsReady(true);
+      }
       if (
         adminCategoryLoadRequestRef.current !== requestId ||
         (Object.keys(generations) as AdminCategoryScope[]).some(
@@ -1414,6 +1437,62 @@ export default function AdminApp({
       return "superseded";
     }
   }
+
+  async function editCategoryIcon(scope: AdminCategoryScope, category: string) {
+    if (!isEditableCategoryIconCategory(category) || categoryIconSaveRef.current || isApplyingCategoryAction) return;
+    const generation = categoryIconGenerationRef.current;
+    const returnFocusTarget = getDialogReturnFocusTarget(document.activeElement);
+    if (!adminCategoryIconsReady && await refreshAdminCategories() !== "success") return;
+    if (categoryIconGenerationRef.current !== generation) return;
+    rememberNextDialogReturnFocus(returnFocusTarget);
+    setCategoryIconError("");
+    setEditingCategoryIcon({ scope, category });
+  }
+
+  async function submitCategoryIcon(icon: CategoryIconValue | null) {
+    if (!editingCategoryIcon || categoryIconSaveRef.current) return;
+    categoryIconSaveRef.current = true;
+    const generation = ++categoryIconGenerationRef.current;
+    setCategoryIconSaving(true);
+    setCategoryIconError("");
+    try {
+      const icons = await saveAdminCategoryIcon(
+        token, editingCategoryIcon.scope, editingCategoryIcon.category, icon
+      );
+      if (categoryIconGenerationRef.current !== generation) return;
+      setAdminCategoryIcons(icons);
+      setAdminCategoryIconsReady(true);
+      setEditingCategoryIcon(null);
+      setStatus(t.categoryIcons.saved);
+    } catch (error) {
+      if (categoryIconGenerationRef.current === generation) {
+        setCategoryIconError(getLocalizedErrorMessage(error, t, t.categoryIcons.saveFailed));
+      }
+    } finally {
+      if (categoryIconGenerationRef.current === generation) {
+        categoryIconSaveRef.current = false;
+        setCategoryIconSaving(false);
+      }
+    }
+  }
+
+  function categoryIconProps(scope: AdminCategoryScope) {
+    return {
+      categoryIcons: adminCategoryIcons[scope],
+      onEditIcon: (category: string) => { void editCategoryIcon(scope, category); }
+    };
+  }
+
+  useEffect(() => {
+    setEditingCategoryIcon(null);
+    setCategoryIconSaving(false);
+    setCategoryIconError("");
+    setAdminCategoryIconsReady(false);
+    return () => {
+      categoryIconGenerationRef.current += 1;
+      categoryIconSaveRef.current = false;
+    };
+  }, [token]);
 
   async function rememberAdminCategory(
     scope: AdminCategoryScope,
@@ -1734,7 +1813,9 @@ export default function AdminApp({
       );
 
       adminCategorySaveGenerationRef.current[scope] += 1;
+      categoryIconGenerationRef.current += 1;
       commitAdminCategorySettings(result.settings);
+      if (result.icons) setAdminCategoryIcons(result.icons);
       syncCategoryStateAfterAction(
         scope,
         normalized,
@@ -2458,7 +2539,6 @@ export default function AdminApp({
     const controller = new AbortController();
     telegramSettingsLoadAbortRef.current = controller;
     setTelegramSettingsLoading(true);
-    setTelegramSettingsLoadError(null);
 
     try {
       const settings = await loadTelegramSettings(token, {
@@ -2466,6 +2546,7 @@ export default function AdminApp({
       });
       if (telegramSettingsLoadRequestRef.current !== requestId) return;
       setTelegramSettings(settings);
+      setTelegramSettingsLoadError(null);
     } catch (error) {
       if (
         telegramSettingsLoadRequestRef.current === requestId &&
@@ -2498,7 +2579,6 @@ export default function AdminApp({
     const controller = new AbortController();
     adminAiSettingsLoadAbortRef.current = controller;
     setAdminAiSettingsLoading(true);
-    setAdminAiSettingsLoadError(null);
 
     try {
       const settings = await loadAdminAiSettings(token, {
@@ -2506,6 +2586,7 @@ export default function AdminApp({
       });
       if (adminAiSettingsLoadRequestRef.current !== requestId) return;
       setAdminAiSettings(settings);
+      setAdminAiSettingsLoadError(null);
     } catch (error) {
       if (
         adminAiSettingsLoadRequestRef.current === requestId &&
@@ -2538,6 +2619,13 @@ export default function AdminApp({
     if (!token) {
       writeActionLocksRef.current.clear();
       adminCategoryLoadRequestRef.current += 1;
+      categoryIconGenerationRef.current += 1;
+      categoryIconSaveRef.current = false;
+      setAdminCategoryIcons(createEmptyCategoryIconSettings());
+      setAdminCategoryIconsReady(false);
+      setEditingCategoryIcon(null);
+      setCategoryIconSaving(false);
+      setCategoryIconError("");
       mutationRefreshGenerationRef.current += 1;
       articleEditorLoadRequestRef.current += 1;
       toolGitHub.reset();
@@ -3679,7 +3767,7 @@ export default function AdminApp({
         !controller.signal.aborted &&
         contentPreviewRequestRef.current === requestId
       ) {
-        setStatus(getContentFeedErrorMessage(error, contentText, t.status.saveFailed));
+        setStatus(getContentFeedErrorMessage(error, contentText, t, t.status.saveFailed));
       }
     } finally {
       if (contentPreviewRequestRef.current === requestId) {
@@ -3737,6 +3825,7 @@ export default function AdminApp({
           const syncError = getContentFeedErrorMessage(
             error,
             contentText,
+            t,
             t.errors.requestFailed
           );
           resultMessage = contentText.savedSyncFailed(syncError);
@@ -3745,7 +3834,7 @@ export default function AdminApp({
 
       await refreshAfterMutation(refreshContent, resultMessage);
     } catch (error) {
-      setStatus(getContentFeedErrorMessage(error, contentText, t.status.saveFailed));
+      setStatus(getContentFeedErrorMessage(error, contentText, t, t.status.saveFailed));
     } finally {
       releaseWriteAction(actionKey);
       setIsContentSourceSaving(false);
@@ -3790,6 +3879,7 @@ export default function AdminApp({
           getContentFeedErrorMessage(
             firstFailure?.reason,
             contentText,
+            t,
             t.status.saveFailed
           )
         );
@@ -4485,6 +4575,7 @@ export default function AdminApp({
                 }}
                 onSearchChange={setAdminSearch}
                 categoryControl={<AdminCategoryFilter
+                  {...categoryIconProps("tools")}
                   allLabel={categoryText.toolLabel}
                   categories={adminFilterCategories}
                   categoryText={categoryText}
@@ -4518,6 +4609,7 @@ export default function AdminApp({
                 }}
                 onSearchChange={setArticleSearch}
                 categoryControl={<AdminCategoryFilter
+                  {...categoryIconProps("articles")}
                   allLabel={categoryText.articleLabel}
                   categories={articleFilterCategories}
                   categoryText={categoryText}
@@ -4554,6 +4646,7 @@ export default function AdminApp({
                 }}
                 onSearchChange={setContentSearch}
                 categoryControl={<AdminCategoryFilter
+                  {...categoryIconProps("content")}
                   allLabel={categoryText.contentLabel}
                   categories={contentFilterCategories}
                   categoryText={categoryText}
@@ -4577,6 +4670,7 @@ export default function AdminApp({
             {adminView === "push" ? (
               <AdminFilterBar
                 categoryControl={<AdminCategoryFilter
+                  {...categoryIconProps("push")}
                   allLabel={categoryText.pushLabel}
                   deletableFixedCategories={TELEGRAM_PUSH_FIXED_FILTERS}
                   fixedCategories={TELEGRAM_PUSH_FIXED_FILTERS}
@@ -4768,6 +4862,7 @@ export default function AdminApp({
 
           {adminView === "content" ? (
             <AdminContentFlowPanel
+              categoryIcons={adminCategoryIcons.content}
               contentSourceCounts={contentSourceCounts}
               clearFiltersLabel={t.actions.clearFilters}
               categoryOrder={contentFilterCategories}
@@ -4995,6 +5090,7 @@ export default function AdminApp({
                     {telegramText.categoryLabel}
                   </span>
                   <AdminCategoryFilter
+                    {...categoryIconProps("push")}
                     alignToTopOnOpen
                     categories={uniqueAdminCategories([
                       ...pushExistingCategories,
@@ -5317,6 +5413,7 @@ export default function AdminApp({
               <div className="tool-form-field">
                 <span className="tool-form-label">{telegramText.categoryLabel}</span>
                 <AdminCategoryFilter
+                  {...categoryIconProps("push")}
                   allowCreate
                   alignToTopOnOpen
                   categories={pushCategoryOptions}
@@ -5669,6 +5766,7 @@ export default function AdminApp({
               <span className="tool-form-label">{t.form.category}</span>
               <div className="admin-resource-input-row admin-resource-category-row has-input-aside">
                 <AdminCategoryFilter
+                  {...categoryIconProps("tools")}
                   allowCreate
                   alignToTopOnOpen
                   categories={adminCategoryOptions}
@@ -5918,6 +6016,7 @@ export default function AdminApp({
               <span className="tool-form-label">{articleText.categoryLabel}</span>
               <small className="form-field-help">{articleText.categoryPlaceholder}</small>
               <AdminCategoryFilter
+                {...categoryIconProps("articles")}
                 alignToTopOnOpen
                 categories={articleCategoryOptions}
                 categoryText={categoryText}
@@ -6131,6 +6230,7 @@ export default function AdminApp({
               <span className="tool-form-label">{contentText.categoryLabel}</span>
               <small className="form-field-help">{contentText.categoryPlaceholder}</small>
               <AdminCategoryFilter
+                {...categoryIconProps("content")}
                 alignToTopOnOpen
                 categories={contentCategoryOptions}
                 categoryText={categoryText}
@@ -6247,6 +6347,7 @@ export default function AdminApp({
               <span className="tool-form-label">{articleText.categoryLabel}</span>
               <small className="form-field-help">{articleText.categoryPlaceholder}</small>
               <AdminCategoryFilter
+                {...categoryIconProps("articles")}
                 alignToTopOnOpen
                 categories={articleCategoryOptions}
                 categoryText={categoryText}
@@ -6404,12 +6505,14 @@ export default function AdminApp({
                   </small>
                 </div>
                 <AdminCategoryFilter
+                  {...categoryIconProps(pendingCategoryAction.scope)}
                   categories={getCategoryActionOptions(
                     pendingCategoryAction.scope,
                     pendingCategoryAction.category
                   )}
                   categoryText={categoryText}
                   className="admin-category-action-filter"
+                  disabled={isApplyingCategoryAction}
                   onChange={setCategoryActionTarget}
                   scope={pendingCategoryAction.scope}
                   t={t}
@@ -6617,11 +6720,27 @@ export default function AdminApp({
           }
         />
       ) : null}
+
+      {editingCategoryIcon ? (
+        <AdminCategoryIconDialog
+          category={editingCategoryIcon.category}
+          error={categoryIconError}
+          icon={adminCategoryIcons[editingCategoryIcon.scope][editingCategoryIcon.category]}
+          key={`${editingCategoryIcon.scope}:${editingCategoryIcon.category}`}
+          onClose={() => {
+            if (!categoryIconSaveRef.current) setEditingCategoryIcon(null);
+          }}
+          onSave={(icon) => { void submitCategoryIcon(icon); }}
+          saving={categoryIconSaving}
+          t={t}
+        />
+      ) : null}
     </div>
   );
 }
 
 function AdminContentFlowPanel({
+  categoryIcons,
   clearFiltersLabel,
   contentSourceCounts,
   categoryOrder,
@@ -6658,6 +6777,7 @@ function AdminContentFlowPanel({
   visibleContentItems,
   writeLockedEntityKeys
 }: {
+  categoryIcons: CategoryIconSettings["content"];
   clearFiltersLabel: string;
   contentSourceCounts: Record<string, number>;
   categoryOrder: string[];
@@ -6924,6 +7044,7 @@ function AdminContentFlowPanel({
                     onClick={() => onSelectScope({ category, sourceId: "all" })}
                     onDoubleClick={() => toggleCategory(category)}
                   >
+                    <CategoryIcon category={category} icon={categoryIcons[category]} size={16} />
                     <span className="content-source-group-copy"><strong>{label}</strong><small>{sources.length}</small></span>
                   </button>
                 </div>
@@ -7304,7 +7425,7 @@ function ContentItemActions({
           onConvert();
         }}
       >
-        {item.articleId ? <CheckCircle2 size={16} /> : <Circle size={16} />}
+        {item.articleId ? <CheckCircle2 size={16} /> : <FileText size={16} />}
       </button>
       <AdminCardActionMenu
         actions={actions}
@@ -7390,6 +7511,7 @@ function AdminCategoryFilter({
   alignToTopOnOpen = false,
   allLabel,
   categories,
+  categoryIcons,
   categoryText,
   className = "",
   deletableFixedCategories = [],
@@ -7399,6 +7521,7 @@ function AdminCategoryFilter({
   labelFor,
   onChange,
   onDeleteCategory,
+  onEditIcon,
   onMoveCategory,
   scope,
   t,
@@ -7408,6 +7531,7 @@ function AdminCategoryFilter({
   alignToTopOnOpen?: boolean;
   allLabel?: string;
   categories: string[];
+  categoryIcons: Record<string, CategoryIconValue>;
   categoryText: AdminCategoryText;
   className?: string;
   deletableFixedCategories?: string[];
@@ -7418,6 +7542,7 @@ function AdminCategoryFilter({
   labelFor?: (category: string) => string;
   onChange: (category: string) => void;
   onDeleteCategory?: (category: string) => void;
+  onEditIcon: (category: string) => void;
   onMoveCategory?: (category: string) => void;
   /**
    * Which category list this control edits. Editors pass it so the empty state reads
@@ -7702,7 +7827,7 @@ function AdminCategoryFilter({
           aria-expanded="true"
           aria-haspopup="listbox"
         >
-          <Tags size={16} />
+          <CategoryIcon category={query ? "" : normalizedValue} icon={query ? undefined : categoryIcons[normalizedValue]} size={16} />
           <span className="admin-category-filter-search">
             <input
               ref={searchRef}
@@ -7768,7 +7893,7 @@ function AdminCategoryFilter({
             }
           }}
         >
-          <Tags size={16} />
+          <CategoryIcon category={normalizedValue} icon={categoryIcons[normalizedValue]} size={16} />
           <span className="admin-category-filter-value" title={selectedLabel}>
             {displaySelectedLabel}
           </span>
@@ -7821,6 +7946,25 @@ function AdminCategoryFilter({
 
                   return (
                     <div className="admin-category-filter-option" key={category}>
+                      {isEditableCategoryIconCategory(category) && !fixed ? (
+                        <button
+                          aria-label={t.categoryIcons.edit(categoryLabel)}
+                          className="admin-category-icon-button"
+                          disabled={disabled}
+                          title={t.categoryIcons.edit(categoryLabel)}
+                          type="button"
+                          onClick={() => {
+                            onEditIcon(category);
+                            closeCategoryFilter();
+                          }}
+                        >
+                          <CategoryIcon category={category} icon={categoryIcons[category]} size={16} />
+                        </button>
+                      ) : (
+                        <span className="admin-category-icon-static">
+                          <CategoryIcon category={category} size={16} />
+                        </span>
+                      )}
                       <button className={`admin-category-select-option ${
                           selected ? "is-selected" : ""
                         }`}
@@ -7985,12 +8129,15 @@ function AdminSystemSettingsPanel({
   const [securitySettingsLoading, setSecuritySettingsLoading] = useState(true);
   const [siteSettingsLoading, setSiteSettingsLoading] = useState(!siteSettingsReady);
   const [proxySettingsLoading, setProxySettingsLoading] = useState(!proxySettingsReady);
-  const [sourceSettingsError, setSourceSettingsError] = useState("");
-  const [siteSettingsError, setSiteSettingsError] = useState("");
-  const [proxySettingsError, setProxySettingsError] = useState("");
+  const [sourceSettingsError, setSourceSettingsError] = useState<unknown>(null);
+  const [siteSettingsError, setSiteSettingsError] = useState<unknown>(siteSettingsLoadError);
+  const [proxySettingsError, setProxySettingsError] = useState<unknown>(proxySettingsLoadError);
   const [sourceSettingsSaving, setSourceSettingsSaving] = useState(false);
   const [githubSettingsDirty, setGitHubSettingsDirty] = useState(false);
   const [umamiSettingsDirty, setUmamiSettingsDirty] = useState(false);
+  const [imageBedSettingsDirty, setImageBedSettingsDirty] = useState(false);
+  const [rssHubSettingsDirty, setRssHubSettingsDirty] = useState(false);
+  const [telegramSettingsDirty, setTelegramSettingsDirty] = useState(false);
   const [securitySettingsDirty, setSecuritySettingsDirty] = useState(false);
   const [settingsReloadKey, setSettingsReloadKey] = useState(0);
   const [proxySaving, setProxySaving] = useState(false);
@@ -8016,13 +8163,6 @@ function AdminSystemSettingsPanel({
   const [homeResetting, setHomeResetting] = useState(false);
   const [siteIconFileName, setSiteIconFileName] = useState("");
   const [siteIconFileInvalid, setSiteIconFileInvalid] = useState(false);
-  const [sitePreviewFailed, setSitePreviewFailed] = useState(false);
-  const [sitePreviewRetryToken, setSitePreviewRetryToken] = useState(0);
-  const sitePreviewIconUrl = siteForm.iconUrl.trim();
-  const sitePreviewIconSrc = useMemo(
-    () => addSiteIconRetryParam(sitePreviewIconUrl, sitePreviewRetryToken),
-    [sitePreviewIconUrl, sitePreviewRetryToken]
-  );
   const [footerSocialLinksText, setFooterSocialLinksText] = useState(
     formatFooterJson(getSiteFooterSettings(siteSettings).socialLinks)
   );
@@ -8194,10 +8334,8 @@ function AdminSystemSettingsPanel({
     }
 
     setSiteSettingsLoading(false);
-    setSiteSettingsError(
-      siteSettingsLoadError ? getLocalizedErrorMessage(siteSettingsLoadError, t) : ""
-    );
-  }, [siteSettingsLoadError, siteSettingsReady, t]);
+    setSiteSettingsError(siteSettingsLoadError);
+  }, [siteSettingsLoadError, siteSettingsReady]);
 
   useEffect(() => {
     if (!proxySettingsReady) {
@@ -8206,10 +8344,8 @@ function AdminSystemSettingsPanel({
     }
 
     setProxySettingsLoading(false);
-    setProxySettingsError(
-      proxySettingsLoadError ? getLocalizedErrorMessage(proxySettingsLoadError, t) : ""
-    );
-  }, [proxySettingsLoadError, proxySettingsReady, t]);
+    setProxySettingsError(proxySettingsLoadError);
+  }, [proxySettingsLoadError, proxySettingsReady]);
 
   useEffect(() => {
     setSettingsTopbarTarget(
@@ -8229,27 +8365,12 @@ function AdminSystemSettingsPanel({
     setSiteIconFileName("");
   }, [siteSettings]);
 
-  useEffect(() => {
-    setSitePreviewFailed(false);
-    setSitePreviewRetryToken(0);
-  }, [siteForm.iconUrl]);
-
-  function handleSitePreviewError() {
-    if (!sitePreviewRetryToken && !isSiteIconDataUrl(sitePreviewIconUrl)) {
-      setSitePreviewRetryToken(Date.now());
-      return;
-    }
-
-    setSitePreviewFailed(true);
-  }
-
   async function loadSourceSettingsCard() {
     const requestId = ++sourceSettingsLoadRequestRef.current;
     sourceSettingsLoadAbortRef.current?.abort();
     const controller = new AbortController();
     sourceSettingsLoadAbortRef.current = controller;
     setSourceSettingsLoading(true);
-    setSourceSettingsError("");
 
     try {
       const settings = await loadSourceSettings(token, {
@@ -8257,13 +8378,14 @@ function AdminSystemSettingsPanel({
       });
       if (sourceSettingsLoadRequestRef.current === requestId) {
         setSourceSettings(settings);
+        setSourceSettingsError(null);
       }
     } catch (error) {
       if (
         sourceSettingsLoadRequestRef.current === requestId &&
         !controller.signal.aborted
       ) {
-        setSourceSettingsError(getLocalizedErrorMessage(error, t));
+        setSourceSettingsError(error);
       }
     } finally {
       if (sourceSettingsLoadRequestRef.current === requestId) {
@@ -8281,11 +8403,11 @@ function AdminSystemSettingsPanel({
     const controller = new AbortController();
     siteSettingsLoadAbortRef.current = controller;
     setSiteSettingsLoading(true);
-    setSiteSettingsError("");
 
     try {
       const settings = await loadSiteSettings({ signal: controller.signal });
       if (siteSettingsLoadRequestRef.current === requestId) {
+        setSiteSettingsError(null);
         syncSiteSettingsForm(settings);
         locallyAppliedSiteSettingsSignatureRef.current =
           createSiteSettingsSignature(settings);
@@ -8297,7 +8419,7 @@ function AdminSystemSettingsPanel({
         siteSettingsLoadRequestRef.current === requestId &&
         !controller.signal.aborted
       ) {
-        setSiteSettingsError(getLocalizedErrorMessage(error, t));
+        setSiteSettingsError(error);
       }
     } finally {
       if (siteSettingsLoadRequestRef.current === requestId) {
@@ -8315,7 +8437,6 @@ function AdminSystemSettingsPanel({
     const controller = new AbortController();
     proxySettingsLoadAbortRef.current = controller;
     setProxySettingsLoading(true);
-    setProxySettingsError("");
 
     try {
       const settings = await loadProxySettings({ signal: controller.signal });
@@ -8327,6 +8448,7 @@ function AdminSystemSettingsPanel({
       };
 
       if (proxySettingsLoadRequestRef.current === requestId) {
+        setProxySettingsError(null);
         setProxyForm(normalizedSettings);
         onProxySettingsChange(normalizedSettings);
       }
@@ -8335,7 +8457,7 @@ function AdminSystemSettingsPanel({
         proxySettingsLoadRequestRef.current === requestId &&
         !controller.signal.aborted
       ) {
-        setProxySettingsError(getLocalizedErrorMessage(error, t));
+        setProxySettingsError(error);
       }
     } finally {
       if (proxySettingsLoadRequestRef.current === requestId) {
@@ -8352,13 +8474,16 @@ function AdminSystemSettingsPanel({
 
     return () => {
       sourceSettingsLoadAbortRef.current?.abort();
-      siteSettingsLoadAbortRef.current?.abort();
-      proxySettingsLoadAbortRef.current?.abort();
       sourceSettingsLoadRequestRef.current += 1;
-      siteSettingsLoadRequestRef.current += 1;
-      proxySettingsLoadRequestRef.current += 1;
     };
   }, [token]);
+
+  useEffect(() => () => {
+    siteSettingsLoadAbortRef.current?.abort();
+    proxySettingsLoadAbortRef.current?.abort();
+    siteSettingsLoadRequestRef.current += 1;
+    proxySettingsLoadRequestRef.current += 1;
+  }, []);
 
   useEffect(() => {
     function handlePopState() {
@@ -8906,7 +9031,6 @@ function AdminSystemSettingsPanel({
         )
       );
       setSiteIconFileName("");
-      setSitePreviewFailed(false);
       applySiteSettingsResponse(settings, "identity");
       setStatus(maintenanceText.siteResetDone);
     } catch (error) {
@@ -8980,7 +9104,6 @@ function AdminSystemSettingsPanel({
     try {
       const iconUrl = await readSiteIconFile(file);
       setSiteIconFileName(file.name);
-      setSitePreviewFailed(false);
       setSiteForm((current) => ({
         ...current,
         iconUrl
@@ -9246,6 +9369,9 @@ function AdminSystemSettingsPanel({
     githubSettingsDirty ||
     proxySettingsDirty ||
     umamiSettingsDirty ||
+    imageBedSettingsDirty ||
+    rssHubSettingsDirty ||
+    telegramSettingsDirty ||
     adminAiSettingsDirty ||
     securitySettingsDirty;
 
@@ -9346,17 +9472,15 @@ function AdminSystemSettingsPanel({
           id="system-settings-panel-site"
           role="tabpanel"
         >
-          {!siteSettingsLoading && siteSettingsError ? (
+          {siteSettingsError ? (
             <article className="source-public-card settings-load-error-card">
-              <div className="settings-card-error" role="alert">
-                <h3>{maintenanceText.systemGroupGeneral}</h3>
-                <p>{siteSettingsError}</p>
-                <button className="ghost-button" type="button"
-                  onClick={() => void loadSiteSettingsCards()}
-                >
-                  {maintenanceText.systemRetry}
-                </button>
-              </div>
+              <AdminSettingsLoadError
+                isRetrying={siteSettingsLoading}
+                message={getLocalizedErrorMessage(siteSettingsError, t)}
+                onRetry={() => void loadSiteSettingsCards()}
+                retryLabel={maintenanceText.systemRetry}
+                title={maintenanceText.systemGroupGeneral}
+              />
             </article>
           ) : (
           <>
@@ -9423,24 +9547,7 @@ function AdminSystemSettingsPanel({
             <div className="site-identity-footer">
               <div className="site-identity-preview-shell">
                 <div className="site-identity-preview">
-                  <span
-                    className={`brand-mark compact-mark ${
-                      sitePreviewIconUrl && !sitePreviewFailed ? "has-site-icon" : ""
-                    }`.trim()}
-                  >
-                    {sitePreviewIconUrl && !sitePreviewFailed ? (
-                      <img
-                        className="site-brand-icon"
-                        src={sitePreviewIconSrc}
-                        alt=""
-                        loading="lazy"
-                        decoding="async"
-                        onError={handleSitePreviewError}
-                      />
-                    ) : (
-                      <Wand2 size={25} />
-                    )}
-                  </span>
+                  <SiteBrandMark className="compact-mark" iconUrl={siteForm.iconUrl} />
                   <span>
                     <strong>{siteForm.name.trim() || DEFAULT_SITE_SETTINGS.name}</strong>
                     <small>{siteForm.subtitle.trim() || DEFAULT_SITE_SETTINGS.subtitle}</small>
@@ -9770,17 +9877,15 @@ function AdminSystemSettingsPanel({
           role="tabpanel"
         >
           <div className="integration-settings-stack">
-          <article className="source-public-card public-source-card" {...getAdminLoadingProps(sourceSettingsLoading, showSourceSettingsSkeleton)}>
-          {!sourceSettingsLoading && sourceSettingsError ? (
-            <div className="settings-card-error" role="alert">
-              <h3>{maintenanceText.publicTitle}</h3>
-              <p>{sourceSettingsError}</p>
-              <button className="ghost-button" type="button"
-                onClick={() => void loadSourceSettingsCard()}
-              >
-                {maintenanceText.systemRetry}
-              </button>
-            </div>
+          <article className="source-public-card public-source-card" {...getAdminLoadingProps(sourceSettingsLoading && !sourceSettingsError, showSourceSettingsSkeleton)}>
+          {sourceSettingsError ? (
+            <AdminSettingsLoadError
+              isRetrying={sourceSettingsLoading}
+              message={getLocalizedErrorMessage(sourceSettingsError, t)}
+              onRetry={() => void loadSourceSettingsCard()}
+              retryLabel={maintenanceText.systemRetry}
+              title={maintenanceText.publicTitle}
+            />
           ) : (
           <>
           <div className="source-card-heading">
@@ -9806,7 +9911,7 @@ function AdminSystemSettingsPanel({
           </label>
           </>
           )}
-          <AdminSkeletonLines loading={sourceSettingsLoading} visible={showSourceSettingsSkeleton} />
+          <AdminSkeletonLines loading={sourceSettingsLoading && !sourceSettingsError} visible={showSourceSettingsSkeleton} />
           </article>
 
           <article className="source-public-card github-submission-card">
@@ -9832,6 +9937,7 @@ function AdminSystemSettingsPanel({
 
           <ImageBedSettingsCard
             maintenanceText={maintenanceText}
+            onDirtyChange={setImageBedSettingsDirty}
             reloadKey={settingsReloadKey}
             setStatus={setStatus}
             t={t}
@@ -9850,22 +9956,21 @@ function AdminSystemSettingsPanel({
           />
           <RssHubSettingsCard
             maintenanceText={maintenanceText}
+            onDirtyChange={setRssHubSettingsDirty}
             reloadKey={settingsReloadKey}
             setStatus={setStatus}
             t={t}
             token={token}
           />
-          <article className="source-public-card ai-settings-card" {...getAdminLoadingProps(adminAiSettingsLoading)}>
-          {!adminAiSettingsLoading && adminAiSettingsLoadError ? (
-            <div className="settings-card-error" role="alert">
-              <h3>{maintenanceText.aiTitle}</h3>
-              <p>{getLocalizedErrorMessage(adminAiSettingsLoadError, t)}</p>
-              <button className="ghost-button" type="button"
-                onClick={() => void onReloadAdminAiSettings()}
-              >
-                {maintenanceText.systemRetry}
-              </button>
-            </div>
+          <article className="source-public-card ai-settings-card" {...getAdminLoadingProps(adminAiSettingsLoading && !adminAiSettingsLoadError)}>
+          {adminAiSettingsLoadError ? (
+            <AdminSettingsLoadError
+              isRetrying={adminAiSettingsLoading}
+              message={getLocalizedErrorMessage(adminAiSettingsLoadError, t)}
+              onRetry={() => void onReloadAdminAiSettings()}
+              retryLabel={maintenanceText.systemRetry}
+              title={maintenanceText.aiTitle}
+            />
           ) : (
             <>
               <div className="source-card-heading">
@@ -9918,11 +10023,12 @@ function AdminSystemSettingsPanel({
               </form>
             </>
           )}
-          <AdminSkeletonLines loading={adminAiSettingsLoading} />
+          <AdminSkeletonLines loading={adminAiSettingsLoading && !adminAiSettingsLoadError} />
           </article>
           <TelegramSettingsCard
             locale={locale}
             maintenanceText={maintenanceText}
+            onDirtyChange={setTelegramSettingsDirty}
             onReload={onReloadTelegramSettings}
             onSettingsChange={onTelegramSettingsChange}
             setStatus={setStatus}
@@ -9932,17 +10038,15 @@ function AdminSystemSettingsPanel({
             t={t}
             token={token}
           />
-          <article className="source-public-card proxy-settings-card" {...getAdminLoadingProps(proxySettingsLoading, showProxySettingsSkeleton)}>
-          {!proxySettingsLoading && proxySettingsError ? (
-            <div className="settings-card-error" role="alert">
-              <h3>{maintenanceText.proxyTitle}</h3>
-              <p>{proxySettingsError}</p>
-              <button className="ghost-button" type="button"
-                onClick={() => void loadProxySettingsCard()}
-              >
-                {maintenanceText.systemRetry}
-              </button>
-            </div>
+          <article className="source-public-card proxy-settings-card" {...getAdminLoadingProps(proxySettingsLoading && !proxySettingsError, showProxySettingsSkeleton)}>
+          {proxySettingsError ? (
+            <AdminSettingsLoadError
+              isRetrying={proxySettingsLoading}
+              message={getLocalizedErrorMessage(proxySettingsError, t)}
+              onRetry={() => void loadProxySettingsCard()}
+              retryLabel={maintenanceText.systemRetry}
+              title={maintenanceText.proxyTitle}
+            />
           ) : (
           <>
           <div className="source-card-heading">
@@ -10040,7 +10144,7 @@ function AdminSystemSettingsPanel({
           </form>
           </>
           )}
-          <AdminSkeletonLines loading={proxySettingsLoading} visible={showProxySettingsSkeleton} />
+          <AdminSkeletonLines loading={proxySettingsLoading && !proxySettingsError} visible={showProxySettingsSkeleton} />
           </article>
           </div>
         </div>
@@ -10476,7 +10580,11 @@ function AdminLinkCheckPanel({
         } catch (error) {
           setResults((current) => [
             ...current,
-            ...buildFailedLinkCheckResults(batch, error)
+            ...buildFailedLinkCheckResults(
+              batch,
+              error,
+              getLocalizedErrorMessage(error, t)
+            )
           ]);
 
           if (getErrorMessage(error).toLowerCase().includes("unauthorized")) {
@@ -10857,15 +10965,15 @@ function AdminLinkCheckPanel({
           </div>
         </div>
 
-        <div className="link-check-tabs" role="tablist" aria-label={t.linkCheck.resultsTitle}>
-          <button className={activeFilter === "abnormal" ? "is-active" : ""}
+        <div className="link-check-tabs" role="group" aria-label={t.linkCheck.resultsTitle}>
+          <button aria-pressed={activeFilter === "abnormal"} className={activeFilter === "abnormal" ? "is-active" : ""}
             onClick={() => setActiveFilter("abnormal")}
             type="button"
           >
             {t.linkCheck.tabsAbnormal(abnormalCount)}
           </button>
           {statusItems.map((item) => (
-            <button className={activeFilter === item.value ? "is-active" : ""}
+            <button aria-pressed={activeFilter === item.value} className={activeFilter === item.value ? "is-active" : ""}
               key={item.value}
               onClick={() => setActiveFilter(item.value)}
               type="button"
@@ -10873,7 +10981,7 @@ function AdminLinkCheckPanel({
               {t.linkCheck.tabsStatus(item.status, item.count)}
             </button>
           ))}
-          <button className={activeFilter === "all" ? "is-active" : ""}
+          <button aria-pressed={activeFilter === "all"} className={activeFilter === "all" ? "is-active" : ""}
             onClick={() => setActiveFilter("all")}
             type="button"
           >
@@ -10948,8 +11056,11 @@ function AdminLinkCheckPanel({
                         </span>
                       </td>
                       <td>
-                        <span className="link-check-error-text" title={result.error ?? "-"}>
-                          {result.error ?? "-"}
+                        <span
+                          className="link-check-error-text"
+                          title={getLinkCheckErrorText(result, t)}
+                        >
+                          {getLinkCheckErrorText(result, t)}
                         </span>
                       </td>
                       <td>
@@ -10999,6 +11110,11 @@ function getLinkCheckResultText(result: LinkCheckResult, t: Messages) {
   }
 
   return result.ok ? t.linkCheck.resultNormal : t.linkCheck.resultAbnormal;
+}
+
+function getLinkCheckErrorText(result: LinkCheckResult, t: Messages) {
+  if (!result.error) return "-";
+  return result.status === 0 ? t.errors.networkError : result.error;
 }
 
 function getLinkCheckPillClass(result: LinkCheckResult) {

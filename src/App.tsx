@@ -84,6 +84,8 @@ import ArticleDetailContent, {
   ArticleDetailContentSkeleton
 } from "./components/ArticleDetailContent";
 import { CategoryRail, DirectoryPagination } from "./components/PublicDirectoryControls";
+import { PublicLoadError } from "./components/PublicLoadError";
+import { createEmptyCategoryIconSettings, normalizeCategoryIconSettings, type CategoryIconSettings } from "./category-icon-settings";
 import {
   DEFAULT_SITE_SETTINGS,
   createArticleStructuredData,
@@ -150,6 +152,7 @@ import {
   type ToastInput
 } from "./admin-helpers";
 import SubmitPageContent from "./SubmitPage";
+import { ToastContext } from "./toast-context";
 
 const MarkdownContent = lazy(() => import("./components/MarkdownContent"));
 const AdminApp = lazy(() => import("./AdminApp"));
@@ -334,6 +337,8 @@ export function App() {
   >({});
   const [toolLoadError, setToolLoadError] = useState("");
   const [articleLoadError, setArticleLoadError] = useState("");
+  const [toolRetryCount, setToolRetryCount] = useState(0);
+  const [articleRetryCount, setArticleRetryCount] = useState(0);
   const [activeCategory, setActiveCategory] = useState("All");
   const [activeArticleCategory, setActiveArticleCategory] = useState("All");
   const [proxySettings, setProxySettings] = useState<ProxySettings>(
@@ -345,16 +350,17 @@ export function App() {
     useState<unknown>(null);
   const [publicCategorySettings, setPublicCategorySettings] =
     useState<AdminCategorySettings>(initialAdminCategorySettings);
+  const [publicCategoryIcons, setPublicCategoryIcons] =
+    useState<CategoryIconSettings>(createEmptyCategoryIconSettings);
   const [siteSettings, setSiteSettings] = useState<SiteSettings>(
     cachedSiteSettings ?? DEFAULT_SITE_SETTINGS
-  );
-  const [siteSettingsLoaded, setSiteSettingsLoaded] = useState(
-    Boolean(cachedSiteSettings)
   );
   const [siteSettingsRequestSettled, setSiteSettingsRequestSettled] =
     useState(false);
   const [siteSettingsRequestError, setSiteSettingsRequestError] =
     useState<unknown>(null);
+  const [siteSettingsRetryCount, setSiteSettingsRetryCount] = useState(0);
+  const siteSettingsLoadingRef = useRef(true);
   const [umamiSettings, setUmamiSettings] = useState<UmamiSettings>(
     DISABLED_UMAMI_SETTINGS
   );
@@ -457,7 +463,6 @@ export function App() {
     publicToolsLoadingMoreRef.current = false;
     setIsToolsLoadingMore(false);
     setIsLoading(true);
-    setToolLoadError("");
 
     void loadTools({
       category: category || undefined,
@@ -488,7 +493,7 @@ export function App() {
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [activeCategory, isCategoryRoute, isHomeRoute, shouldLoadPublicTools]);
+  }, [activeCategory, isCategoryRoute, isHomeRoute, shouldLoadPublicTools, toolRetryCount]);
 
   useEffect(() => {
     if (!shouldLoadPublicArticles) {
@@ -517,7 +522,6 @@ export function App() {
     publicArticlesLoadingMoreRef.current = false;
     setIsArticlesLoadingMore(false);
     setIsArticlesLoading(true);
-    setArticleLoadError("");
 
     void loadArticles({
       category: category || undefined,
@@ -530,6 +534,7 @@ export function App() {
         if (publicArticlesRequestIdRef.current !== requestId) return;
         setArticles(page.articles);
         setArticleHasMore(page.hasMore);
+        setArticleLoadError("");
         if (page.categoryCounts) setArticleCategoryCounts(page.categoryCounts);
       })
       .catch((error) => {
@@ -553,7 +558,8 @@ export function App() {
     isArticleDetailRoute,
     isArticlesRoute,
     isHomeRoute,
-    shouldLoadPublicArticles
+    shouldLoadPublicArticles,
+    articleRetryCount
   ]);
 
   useEffect(() => {
@@ -569,6 +575,7 @@ export function App() {
 
         if (active) {
           setPublicCategorySettings(data.settings);
+          setPublicCategoryIcons(normalizeCategoryIconSettings(data.icons));
           setToolCategoryCounts(
             Object.fromEntries(
               data.categories.map((row) => [row.category, Number(row.total ?? 0)])
@@ -599,13 +606,15 @@ export function App() {
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
+    siteSettingsLoadingRef.current = true;
     setSiteSettingsRequestSettled(false);
-    setSiteSettingsRequestError(null);
 
     async function refreshSiteSettings() {
       try {
         const { settings, umami } = await loadSiteConfiguration({
-          includeFullContent: shouldLoadFullSiteSettings
+          includeFullContent: shouldLoadFullSiteSettings,
+          signal: controller.signal
         });
 
         if (active) {
@@ -625,7 +634,7 @@ export function App() {
               return nextSettings;
             });
           }
-          setSiteSettingsLoaded(true);
+          siteSettingsLoadingRef.current = false;
           setSiteSettingsRequestError(null);
           setSiteSettingsRequestSettled(true);
         }
@@ -635,7 +644,7 @@ export function App() {
           if (!cachedSiteSettings) {
             setSiteSettings(DEFAULT_SITE_SETTINGS);
           }
-          setSiteSettingsLoaded(true);
+          siteSettingsLoadingRef.current = false;
           setSiteSettingsRequestError(error);
           setSiteSettingsRequestSettled(true);
         }
@@ -646,8 +655,16 @@ export function App() {
 
     return () => {
       active = false;
+      controller.abort();
     };
-  }, [shouldLoadFullSiteSettings]);
+  }, [shouldLoadFullSiteSettings, siteSettingsRetryCount]);
+
+  function retrySiteSettings() {
+    if (siteSettingsLoadingRef.current) return;
+    siteSettingsLoadingRef.current = true;
+    setSiteSettingsRequestSettled(false);
+    setSiteSettingsRetryCount((count) => count + 1);
+  }
 
   useEffect(() => {
     if (
@@ -709,6 +726,20 @@ export function App() {
       active = false;
     };
   }, []);
+
+  function retryPublicTools() {
+    if (publicToolsAbortRef.current || publicToolsLoadingMoreRef.current) return;
+    publicToolsLoadingMoreRef.current = true;
+    setIsLoading(true);
+    setToolRetryCount((count) => count + 1);
+  }
+
+  function retryPublicArticles() {
+    if (publicArticlesAbortRef.current || publicArticlesLoadingMoreRef.current) return;
+    publicArticlesLoadingMoreRef.current = true;
+    setIsArticlesLoading(true);
+    setArticleRetryCount((count) => count + 1);
+  }
 
   function handlePublicArticleCategoryChange(category: string) {
     const normalized = normalizeAdminCategoryValue(category);
@@ -945,7 +976,7 @@ export function App() {
   ]);
 
   useEffect(() => {
-    syncSiteFavicon(siteSettings.iconUrl);
+    return syncSiteFavicon(siteSettings.iconUrl);
   }, [siteSettings.iconUrl]);
 
   const hasFeaturedTools = featuredToolTotal > 0;
@@ -1013,6 +1044,9 @@ export function App() {
   const showPublicArticleSkeletons = useLoadingSkeleton(
     isArticlesLoading && articles.length === 0
   );
+  const siteSettingsErrorMessage = siteSettingsRequestError
+    ? getLocalizedErrorMessage(siteSettingsRequestError, t)
+    : "";
   function updateSiteSettings(settings: SiteSettings) {
     setSiteSettings(settings);
     setSiteSettingsRequestError(null);
@@ -1103,6 +1137,7 @@ export function App() {
   ) : isArticlesRoute ? (
     <ArticlesPage
       activeCategory={activeArticleCategory}
+      categoryIcons={publicCategoryIcons.articles}
       articles={articles}
       categories={articleCategories}
       categoryNotice={categoryNotice}
@@ -1116,6 +1151,7 @@ export function App() {
       onLocaleChange={setLocale}
       onThemeChange={setThemeMode}
       onPageChange={changePublicArticlePage}
+      onRetry={retryPublicArticles}
       setActiveCategory={handlePublicArticleCategoryChange}
       searchArticles={articles}
       searchTools={tools}
@@ -1126,30 +1162,35 @@ export function App() {
     />
   ) : isAboutRoute ? (
     <AboutPage
+      error={siteSettingsErrorMessage}
       locale={locale}
       onLocaleChange={setLocale}
+      onRetry={retrySiteSettings}
       onThemeChange={setThemeMode}
       searchArticles={articles}
       searchTools={tools}
-      siteSettingsLoaded={siteSettingsLoaded}
+      siteSettingsLoaded={siteSettingsRequestSettled}
       t={t}
       themeMode={themeMode}
     />
   ) : isPrivacyRoute || isTermsRoute ? (
     <LegalPage
+      error={siteSettingsErrorMessage}
       kind={isPrivacyRoute ? "privacy" : "terms"}
       locale={locale}
       onLocaleChange={setLocale}
+      onRetry={retrySiteSettings}
       onThemeChange={setThemeMode}
       searchArticles={articles}
       searchTools={tools}
-      siteSettingsLoaded={siteSettingsLoaded}
+      siteSettingsLoaded={siteSettingsRequestSettled}
       t={t}
       themeMode={themeMode}
     />
   ) : isCategoryRoute ? (
     <CategoryPage
       activeCategory={activeCategory}
+      categoryIcons={publicCategoryIcons.tools}
       categories={categories}
       categoryNotice={categoryNotice}
       hasMore={toolHasMore}
@@ -1164,6 +1205,7 @@ export function App() {
       searchArticles={articles}
       searchTools={tools}
       onPageChange={changePublicToolPage}
+      onRetry={retryPublicTools}
       setActiveCategory={handlePublicToolCategoryChange}
       showSkeletons={showInitialToolSkeletons}
       t={t}
@@ -1179,6 +1221,8 @@ export function App() {
       categoryNotice={categoryNotice}
       isArticlesLoading={isArticlesLoading}
       isLoading={isInitialToolsLoading}
+      onRetryArticles={retryPublicArticles}
+      onRetryTools={retryPublicTools}
       locale={locale}
       onLocaleChange={setLocale}
       onThemeChange={setThemeMode}
@@ -1197,12 +1241,14 @@ export function App() {
   );
 
   return (
-    <SiteSettingsContext.Provider value={siteSettings}>
-      <ProxySettingsContext.Provider value={proxySettings}>
-        {page}
-        <GlobalToasts toasts={toasts} />
-      </ProxySettingsContext.Provider>
-    </SiteSettingsContext.Provider>
+    <ToastContext.Provider value={notify}>
+      <SiteSettingsContext.Provider value={siteSettings}>
+        <ProxySettingsContext.Provider value={proxySettings}>
+          {page}
+          <GlobalToasts toasts={toasts} />
+        </ProxySettingsContext.Provider>
+      </SiteSettingsContext.Provider>
+    </ToastContext.Provider>
   );
 }
 
@@ -1235,6 +1281,8 @@ function HomePage({
   isArticlesLoading,
   locale,
   onLocaleChange,
+  onRetryArticles,
+  onRetryTools,
   onThemeChange,
   proxySettings,
   searchArticles,
@@ -1255,6 +1303,8 @@ function HomePage({
   isArticlesLoading: boolean;
   locale: Locale;
   onLocaleChange: (locale: Locale) => void;
+  onRetryArticles: () => void;
+  onRetryTools: () => void;
   onThemeChange: (themeMode: ThemeMode) => void;
   proxySettings: ProxySettings;
   searchArticles: ArticleSummary[];
@@ -1318,7 +1368,9 @@ function HomePage({
           {categoryNotice}
           <SectionTitle icon={<PackagePlus size={25} />} title={t.home.latestTools} />
           <div className="home-tool-grid">
-            {isLoading ? (
+            {toolLoadError && latestTools.length === 0 ? (
+              <PublicLoadError busy={isLoading} message={toolLoadError} onRetry={onRetryTools} t={t} />
+            ) : isLoading ? (
               <SkeletonVisibility visible={showToolSkeletons}>
                 {Array.from({ length: 8 }).map((_, index) => (
                   <ToolCardSkeleton home key={index} />
@@ -1337,23 +1389,19 @@ function HomePage({
             ) : (
               <div className="empty-state">
                 <div className="empty-state-title">
-                  {toolLoadError ? <CircleAlert size={24} /> : <PanelLeft size={24} />}
+                  <PanelLeft size={24} />
                   <h2>
-                    {toolLoadError
-                      ? t.empty.connectionTitle
-                      : totalToolCount === 0
+                    {totalToolCount === 0
                         ? t.empty.libraryTitle
                         : t.empty.title}
                   </h2>
                 </div>
                 <p>
-                  {toolLoadError
-                    ? toolLoadError
-                    : totalToolCount === 0
+                  {totalToolCount === 0
                       ? t.empty.libraryDescription
                       : t.empty.description}
                 </p>
-                {!toolLoadError && totalToolCount === 0 ? (
+                {totalToolCount === 0 ? (
                   <a
                     className="primary-button empty-state-action"
                     href={getAdminPath("import-export")}
@@ -1375,7 +1423,9 @@ function HomePage({
         <section className="home-section" id="latest-articles">
           <SectionTitle icon={<FileText size={25} />} title={t.home.latestArticles} />
           <div className="article-list">
-            {isArticlesLoading ? (
+            {articleError && latestArticles.length === 0 ? (
+              <PublicLoadError busy={isArticlesLoading} message={articleError} onRetry={onRetryArticles} t={t} />
+            ) : isArticlesLoading ? (
               <SkeletonVisibility visible={showArticleSkeletons}>
                 {Array.from({ length: 4 }).map((_, index) => (
                   <ArticleItemSkeleton key={index} />
@@ -1392,17 +1442,11 @@ function HomePage({
             ) : (
               <div className="empty-state article-empty-state">
                 <div className="empty-state-title">
-                  {articleError ? <CircleAlert size={24} /> : <FileText size={24} />}
-                  <h2>
-                    {articleError
-                      ? t.empty.connectionTitle
-                      : articleText.publicEmptyTitle}
-                  </h2>
+                  <FileText size={24} />
+                  <h2>{articleText.publicEmptyTitle}</h2>
                 </div>
                 <p>
-                  {articleError
-                    ? articleError
-                    : articleText.publicEmptyDescription}
+                  {articleText.publicEmptyDescription}
                 </p>
               </div>
             )}
@@ -1423,6 +1467,7 @@ function HomePage({
 function CategoryPage({
   activeCategory,
   categories,
+  categoryIcons,
   categoryNotice,
   currentPage,
   hasMore,
@@ -1431,6 +1476,7 @@ function CategoryPage({
   isRefreshing,
   locale,
   onPageChange,
+  onRetry,
   onLocaleChange,
   onThemeChange,
   proxySettings,
@@ -1446,6 +1492,7 @@ function CategoryPage({
 }: {
   activeCategory: string;
   categories: string[];
+  categoryIcons: CategoryIconSettings["tools"];
   categoryNotice: ReactNode;
   currentPage: number;
   hasMore: boolean;
@@ -1454,6 +1501,7 @@ function CategoryPage({
   isRefreshing: boolean;
   locale: Locale;
   onPageChange: (page: number) => void;
+  onRetry: () => void;
   onLocaleChange: (locale: Locale) => void;
   onThemeChange: (themeMode: ThemeMode) => void;
   proxySettings: ProxySettings;
@@ -1501,6 +1549,7 @@ function CategoryPage({
           <CategoryRail
             activeCategory={activeCategory}
             categories={categories}
+            categoryIcons={categoryIcons}
             isLoading={isLoading}
             onSelect={handleCategorySelect}
             showSkeletons={showSkeletons}
@@ -1515,7 +1564,9 @@ function CategoryPage({
             {categoryNotice}
             {isRefreshing ? <span className="results-refresh-indicator" aria-hidden="true" /> : null}
             <div className="tool-grid" id="tools">
-              {isLoading ? (
+              {toolLoadError && tools.length === 0 ? (
+                <PublicLoadError busy={isLoading} message={toolLoadError} onRetry={onRetry} t={t} />
+              ) : isLoading ? (
                 <SkeletonVisibility visible={showSkeletons}>
                   {Array.from({ length: CATEGORY_PAGE_SIZE }).map((_, index) => (
                     <ToolCardSkeleton key={index} />
@@ -1534,23 +1585,19 @@ function CategoryPage({
               ) : (
                 <div className="empty-state">
                   <div className="empty-state-title">
-                    {toolLoadError ? <CircleAlert size={24} /> : <PanelLeft size={24} />}
+                    <PanelLeft size={24} />
                     <h2>
-                      {toolLoadError
-                        ? t.empty.connectionTitle
-                        : totalToolCount === 0
+                      {totalToolCount === 0
                           ? t.empty.libraryTitle
                           : t.empty.title}
                     </h2>
                   </div>
                   <p>
-                    {toolLoadError
-                      ? toolLoadError
-                      : totalToolCount === 0
+                    {totalToolCount === 0
                         ? t.empty.libraryDescription
                         : t.empty.description}
                   </p>
-                  {!toolLoadError && totalToolCount === 0 ? (
+                  {totalToolCount === 0 ? (
                     <a
                       className="primary-button empty-state-action"
                       href={getAdminPath("import-export")}
@@ -1586,6 +1633,7 @@ function ArticlesPage({
   activeCategory,
   articles,
   categories,
+  categoryIcons,
   categoryNotice,
   currentPage,
   error,
@@ -1596,6 +1644,7 @@ function ArticlesPage({
   locale,
   onLocaleChange,
   onPageChange,
+  onRetry,
   onThemeChange,
   searchArticles,
   searchTools,
@@ -1608,6 +1657,7 @@ function ArticlesPage({
   activeCategory: string;
   articles: ArticleSummary[];
   categories: string[];
+  categoryIcons: CategoryIconSettings["articles"];
   categoryNotice: ReactNode;
   currentPage: number;
   error: string;
@@ -1618,6 +1668,7 @@ function ArticlesPage({
   locale: Locale;
   onLocaleChange: (locale: Locale) => void;
   onPageChange: (page: number) => void;
+  onRetry: () => void;
   onThemeChange: (themeMode: ThemeMode) => void;
   searchArticles: ArticleSummary[];
   searchTools: Tool[];
@@ -1660,6 +1711,7 @@ function ArticlesPage({
           <CategoryRail
             activeCategory={activeCategory}
             categories={categories}
+            categoryIcons={categoryIcons}
             isLoading={isLoading}
             onSelect={handleCategorySelect}
             showSkeletons={showSkeletons}
@@ -1674,7 +1726,9 @@ function ArticlesPage({
             {categoryNotice}
             {isRefreshing ? <span className="results-refresh-indicator" aria-hidden="true" /> : null}
             <section className="article-page-list" aria-label={t.articlesPage.title}>
-              {isLoading ? (
+              {error && articles.length === 0 ? (
+                <PublicLoadError busy={isLoading} message={error} onRetry={onRetry} t={t} />
+              ) : isLoading ? (
                 <SkeletonVisibility visible={showSkeletons}>
                   {Array.from({ length: 6 }).map((_, index) => (
                     <ArticleItemSkeleton key={index} />
@@ -1691,19 +1745,15 @@ function ArticlesPage({
               ) : (
                 <div className="empty-state article-empty-state">
                   <div className="empty-state-title">
-                    {error ? <CircleAlert size={24} /> : <FileText size={24} />}
+                    <FileText size={24} />
                     <h2>
-                      {error
-                        ? t.empty.connectionTitle
-                        : totalArticleCount === 0
+                      {totalArticleCount === 0
                           ? articleText.publicEmptyTitle
                           : articleText.noMatchTitle}
                     </h2>
                   </div>
                   <p>
-                    {error
-                      ? error
-                      : totalArticleCount === 0
+                    {totalArticleCount === 0
                         ? articleText.publicEmptyDescription
                         : articleText.noMatchDescription}
                   </p>
@@ -1750,8 +1800,12 @@ function ArticleDetailPage({
 }) {
   const [article, setArticle] = useState<Article | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const requestPendingRef = useRef(false);
   const articleText = getArticleText(locale);
+  const notFound = error instanceof Error && "status" in error && error.status === 404;
+  const loadErrorMessage = error ? getLocalizedErrorMessage(error, t) : "";
   const siteSettings = useSiteSettings();
   const proxySettings = useProxySettings();
   const showSkeleton = useLoadingSkeleton(isLoading);
@@ -1766,10 +1820,11 @@ function ArticleDetailPage({
     : "";
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
 
     async function refreshArticle() {
+      requestPendingRef.current = true;
       setIsLoading(true);
-      setError("");
 
       try {
         const previewToken = isPreview || previewContentItemId
@@ -1785,25 +1840,28 @@ function ArticleDetailPage({
           const { loadContentItemArticlePreview } = await import("./admin-api");
           nextArticle = await loadContentItemArticlePreview(
             previewContentItemId,
-            previewToken
+            previewToken,
+            { signal: controller.signal }
           );
         } else if (isPreview && previewToken) {
           const { loadArticlePreview } = await import("./admin-api");
-          nextArticle = await loadArticlePreview(articleSlug, previewToken);
+          nextArticle = await loadArticlePreview(articleSlug, previewToken, { signal: controller.signal });
         } else {
-          nextArticle = await loadArticle(articleSlug);
+          nextArticle = await loadArticle(articleSlug, { signal: controller.signal });
         }
 
         if (active) {
           setArticle(nextArticle);
+          setError(null);
         }
       } catch (loadError) {
         if (active) {
           setArticle(null);
-          setError(loadError instanceof Error ? loadError.message : "Request failed");
+          setError(loadError);
         }
       } finally {
         if (active) {
+          requestPendingRef.current = false;
           setIsLoading(false);
         }
       }
@@ -1813,8 +1871,16 @@ function ArticleDetailPage({
 
     return () => {
       active = false;
+      controller.abort();
     };
-  }, [articleSlug, isPreview, previewContentItemId]);
+  }, [articleSlug, isPreview, previewContentItemId, retryCount]);
+
+  function retryArticle() {
+    if (requestPendingRef.current) return;
+    requestPendingRef.current = true;
+    setIsLoading(true);
+    setRetryCount((count) => count + 1);
+  }
 
   useEffect(() => {
     if (isLoading) {
@@ -1859,8 +1925,8 @@ function ArticleDetailPage({
     }
 
     syncDocumentMetadata({
-      title: formatPublicDocumentTitle(articleText.notFoundTitle, siteSettings),
-      description: articleText.notFoundDescription,
+      title: formatPublicDocumentTitle(notFound ? articleText.notFoundTitle : t.empty.connectionTitle, siteSettings),
+      description: notFound ? articleText.notFoundDescription : loadErrorMessage,
       robots: NO_INDEX_ROBOTS
     });
   }, [
@@ -1870,13 +1936,16 @@ function ArticleDetailPage({
     articleText.notFoundDescription,
     articleText.notFoundTitle,
     isLoading,
+    loadErrorMessage,
+    notFound,
     isPreview,
     isPreviewDocument,
     locale,
     previewContentItemId,
     siteSettings,
     t.articlesPage.description,
-    t.articlesPage.title
+    t.articlesPage.title,
+    t.empty.connectionTitle
   ]);
 
   return (
@@ -1893,7 +1962,14 @@ function ArticleDetailPage({
       />
 
       <main className="content-page article-detail-page">
-        {isLoading ? (
+        {Boolean(error) && !notFound ? (
+          <PublicLoadError busy={isLoading} message={loadErrorMessage} onRetry={retryArticle} t={t}>
+            <a className="ghost-button empty-state-action" href="/articles">
+              {articleText.backToArticles}
+              <ArrowUpRight size={15} />
+            </a>
+          </PublicLoadError>
+        ) : isLoading ? (
           <SkeletonVisibility visible={showSkeleton}>
             <ArticleDetailContentSkeleton
               backLink={{ href: "/articles", label: articleText.backToArticles }}
@@ -1912,7 +1988,7 @@ function ArticleDetailPage({
               <CircleAlert size={24} />
               <h2>{articleText.notFoundTitle}</h2>
             </div>
-            <p>{error ? articleText.notFoundDescription : articleText.notFoundDescription}</p>
+            <p>{articleText.notFoundDescription}</p>
             <a className="primary-button empty-state-action" href="/articles">
               {articleText.backToArticles}
               <ArrowUpRight size={15} />
@@ -2055,8 +2131,10 @@ function ArticleItemSkeleton() {
 }
 
 function AboutPage({
+  error,
   locale,
   onLocaleChange,
+  onRetry,
   onThemeChange,
   searchArticles,
   searchTools,
@@ -2064,8 +2142,10 @@ function AboutPage({
   t,
   themeMode
 }: {
+  error: string;
   locale: Locale;
   onLocaleChange: (locale: Locale) => void;
+  onRetry: () => void;
   onThemeChange: (themeMode: ThemeMode) => void;
   searchArticles: ArticleSummary[];
   searchTools: Tool[];
@@ -2093,8 +2173,10 @@ function AboutPage({
 
       <main className="category-page public-page about-page">
         <section className="public-page-body public-page-body-prose">
-          <article className={`about-content ${!siteSettingsLoaded ? "is-loading" : ""}`}>
-            {siteSettingsLoaded ? (
+          <article className={`about-content ${!siteSettingsLoaded && !error ? "is-loading" : ""}`}>
+            {error ? (
+              <PublicLoadError busy={!siteSettingsLoaded} message={error} onRetry={onRetry} t={t} />
+            ) : siteSettingsLoaded ? (
               <Suspense
                 fallback={
                   <LoadingSkeleton>
@@ -2127,9 +2209,11 @@ function AboutContentSkeleton() {
 }
 
 function LegalPage({
+  error,
   kind,
   locale,
   onLocaleChange,
+  onRetry,
   onThemeChange,
   searchArticles,
   searchTools,
@@ -2137,9 +2221,11 @@ function LegalPage({
   t,
   themeMode
 }: {
+  error: string;
   kind: LegalPageKind;
   locale: Locale;
   onLocaleChange: (locale: Locale) => void;
+  onRetry: () => void;
   onThemeChange: (themeMode: ThemeMode) => void;
   searchArticles: ArticleSummary[];
   searchTools: Tool[];
@@ -2168,7 +2254,9 @@ function LegalPage({
       <main className="category-page public-page legal-page">
         <section className="public-page-body public-page-body-prose">
           <article className="about-content">
-            {siteSettingsLoaded ? (
+            {error ? (
+              <PublicLoadError busy={!siteSettingsLoaded} message={error} onRetry={onRetry} t={t} />
+            ) : siteSettingsLoaded ? (
               <Suspense
                 fallback={
                   <LoadingSkeleton>

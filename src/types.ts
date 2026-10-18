@@ -5,6 +5,7 @@ import {
   type AdminAiModel,
   type AdminAiTask
 } from "../shared/admin-ai";
+import type { CategoryIconSettings } from "./category-icon-settings";
 
 export {
   ADMIN_AI_DOCUMENT_EXTENSIONS,
@@ -190,6 +191,8 @@ export type ContentSyncResponse = {
   nextOffset: number | null;
 };
 
+export type { CategoryIcon, CategoryIconName, CategoryIconSettings } from "./category-icon-settings";
+
 export type AdminCategoryScope = "tools" | "articles" | "push" | "content";
 
 export type AdminCategorySettings = Record<AdminCategoryScope, string[]>;
@@ -199,6 +202,7 @@ export type AdminCategoryAction = "migrate" | "delete";
 export type AdminCategoryActionResult = {
   affected: number;
   settings: AdminCategorySettings;
+  icons?: CategoryIconSettings;
 };
 
 export type ToolImportMode = "skip" | "upsert";

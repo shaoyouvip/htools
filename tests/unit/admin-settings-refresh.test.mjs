@@ -17,17 +17,40 @@ const apiUrl = moduleUrl(`
   export const loadGitHubSettings = (...args) => api.load(...args);
   export const loadImageBedSettings = (...args) => api.load(...args);
   export const loadRssHubSettings = (...args) => api.load(...args);
+  export const loadTurnstileSettings = (...args) => api.load(...args);
+  export const loadUmamiSettings = (...args) => api.load(...args);
+  export const loadAdminSecuritySettings = (...args) => api.load(...args);
   export const saveGitHubSettings = (...args) => api.save(...args);
   export const saveImageBedSettings = (...args) => api.save(...args);
   export const saveRssHubSettings = (...args) => api.save(...args);
+  export const saveTurnstileSettings = (...args) => api.save(...args);
+  export const saveUmamiSettings = (...args) => api.save(...args);
+  export const updateAdminPassword = (...args) => api.save(...args);
+  export const saveTelegramSettings = (...args) => api.save(...args);
+  export const testTelegramSettings = (...args) => api.test(...args);
 `);
 const { setRuntime } = await import(hookUrl);
 const { setApi } = await import(apiUrl);
+const panelSource = await readFile(new URL("../../src/components/AdminPanelStates.tsx", import.meta.url), "utf8");
+const panelModule = moduleUrl(ts.transpileModule(panelSource, {
+  fileName: "AdminPanelStates.tsx",
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX }
+}).outputText
+  .replaceAll('from "react/jsx-runtime"', `from "${import.meta.resolve("react/jsx-runtime")}"`)
+  .replaceAll('from "lucide-react"', `from "${import.meta.resolve("lucide-react")}"`)
+  .replaceAll('from "../article-helpers"', `from "${moduleUrl("export const isChineseLocaleText = () => true;")}"`));
 const replacements = {
   react: hookUrl,
   "react/jsx-runtime": import.meta.resolve("react/jsx-runtime"),
   "../../admin-api": apiUrl,
-  "../../site-helpers": moduleUrl("export const getLocalizedErrorMessage = (error) => error.message;"),
+  "../../site-helpers": moduleUrl("export const getLocalizedErrorMessage = (error, t) => t.testLocale ? `${t.testLocale}:${error.message}` : error.message;"),
+  "../../admin-helpers": moduleUrl("export const formatAdminDate = (value) => value;"),
+  "../../umami": moduleUrl(`
+    export const hasCompleteUmamiSettings = (value) => Boolean(value.scriptUrl && value.websiteId);
+    export const normalizeUmamiScriptUrl = (value) => value.trim();
+    export const normalizeUmamiWebsiteId = (value) => value.trim();
+  `),
+  "../AdminPanelStates": panelModule,
   "../../shared-ui": moduleUrl("export function SkeletonVisibility() {}"),
   "../../useLoadingSkeleton": moduleUrl("export const useLoadingSkeleton = (loading) => loading;"),
   "../../../shared/rsshub": moduleUrl("export const normalizeRssHubBaseUrl = (value) => value.trim();"),
@@ -53,15 +76,18 @@ async function loadComponent(name) {
 }
 
 // 执行真实组件的状态与事件回调；仅替换 React 挂载环境及网络请求。
-function mount(Component, api) {
+function mount(Component, api, initialProps = {}) {
   const hooks = [];
   let index = 0;
   let dirty = false;
   let effects = [];
   let tree;
+  const dirtyReports = [];
   let props = {
     maintenanceText: {}, t: { githubSettings: {}, actions: {} }, token: "local-test-token", reloadKey: 0,
-    onDirtyChange() {}, onStatus() {}, setStatus() {}
+    onDirtyChange(value) { dirtyReports.push(value); }, onStatus() {}, setStatus() {},
+    onSettingsChange() {}, onLoadingChange() {}, onTokenChange() {},
+    ...initialProps
   };
   const runtime = {
     useState(initial) {
@@ -102,6 +128,8 @@ function mount(Component, api) {
   render();
   return {
     render,
+    get dirty() { return dirtyReports.at(-1); },
+    dirtyReports,
     async flush() {
       for (let iteration = 0; iteration < 12; iteration += 1) {
         await Promise.resolve();
@@ -112,6 +140,7 @@ function mount(Component, api) {
       function walk(value) {
         if (Array.isArray(value)) return value.flatMap(walk);
         if (!value || typeof value !== "object") return [];
+        if (value.type?.name === "AdminSettingsLoadError") return walk(value.type(value.props));
         return [...(predicate(value) ? [value] : []), ...walk(value.props?.children)];
       }
       return walk(tree);
@@ -246,6 +275,49 @@ test("GitHub 切换语言保留草稿，备份恢复读取失败后重试仍以�
   } finally { mounted.unmount(); }
 });
 
+for (const card of [
+  ...cards,
+  { name: "TurnstileSettingsCard", restored: { available: false, enabled: false, siteKey: "" } },
+  { name: "UmamiSettingsCard", restored: { enabled: false, scriptUrl: "", websiteId: "" } },
+  { name: "SecuritySettingsCard", restored: { passwordConfigured: true, source: "database", updatedAt: "" } }
+]) {
+  const Component = card.Component ?? await loadComponent(card.name);
+  test(`${card.name} 重试期间切换语言不重复读取，旧请求失败按当前语言展示`, async () => {
+    const pending = [];
+    const mounted = mount(Component, { load: () => {
+      const request = deferred();
+      pending.push(request);
+      return request.promise;
+    } }, { t: { githubSettings: {}, actions: {}, testLocale: "zh" } });
+    const errorPanel = () => mounted.find((node) => node.props?.className === "settings-card-error")[0];
+    const retryButton = () => mounted.find((node) => node.type === "button")[0];
+    try {
+      pending[0].reject(new Error("initial-error"));
+      await mounted.flush();
+      assert.equal(mounted.find((node) => node.type === "p")[0].props.children, "zh:initial-error");
+      retryButton().props.onClick();
+      await mounted.flush();
+      assert.equal(retryButton().props.disabled, true);
+      mounted.render({ t: { githubSettings: {}, actions: {}, testLocale: "en" } });
+      await mounted.flush();
+      assert.equal(pending.length, 2, "切换语言不应取消或重复设置读取");
+      assert.equal(errorPanel().props["aria-busy"], true);
+      assert.equal(retryButton().props.disabled, true);
+      assert.equal(mounted.find((node) => node.type === "p")[0].props.children, "en:initial-error");
+
+      pending[1].reject(new Error("retry-error"));
+      await mounted.flush();
+      assert.equal(retryButton().props.disabled, false);
+      assert.equal(mounted.find((node) => node.type === "p")[0].props.children, "en:retry-error");
+      retryButton().props.onClick();
+      await mounted.flush();
+      pending[2].resolve(card.restored);
+      await mounted.flush();
+      assert.equal(errorPanel(), undefined, "再次读取成功应恢复实际设置内容");
+    } finally { mounted.unmount(); }
+  });
+}
+
 for (const fail of [false, true]) {
   test(`图床开关${fail ? "失败" : "成功"}时保留未保存的地址和目录`, async () => {
     const card = cards[1];
@@ -279,4 +351,96 @@ test("恢复备份刷新标记传到三个服务卡片", async () => {
   for (const { name } of cards) {
     assert.ok(new RegExp(`<${name}\\b[^>]*reloadKey=\\{settingsReloadKey\\}`).test(source), `${name} 应接收恢复后的刷新标记`);
   }
+});
+
+for (const card of cards.filter(({ name }) => name !== "GitHubSettingsForm")) {
+  test(`${card.name} 上报未保存草稿，保存失败保留，成功和卸载后清除`, async () => {
+    let fail = true;
+    const mounted = mount(card.Component, {
+      load: async () => card.initial,
+      save: async (next) => {
+        if (fail) throw new Error("本地模拟保存失败");
+        return { ...card.initial, ...next };
+      }
+    });
+    try {
+      await mounted.flush();
+      assert.equal(mounted.dirty, false, "初始配置不应被当成草稿");
+      mounted.find((node) => node.type === "input")[0].props.onChange({ target: { value: "https://draft.example/" } });
+      await mounted.flush();
+      assert.equal(mounted.dirty, true, "编辑应上报给恢复备份提醒");
+      await mounted.find((node) => node.type === "form")[0].props.onSubmit({ preventDefault() {} });
+      await mounted.flush();
+      assert.equal(mounted.dirty, true, "保存失败不能清除提醒");
+      assert.equal(mounted.find((node) => node.type === "input")[0].props.value, "https://draft.example/");
+      fail = false;
+      await mounted.find((node) => node.type === "form")[0].props.onSubmit({ preventDefault() {} });
+      await mounted.flush();
+      assert.equal(mounted.dirty, false, "保存成功应清除提醒");
+      mounted.find((node) => node.type === "input")[0].props.onChange({ target: { value: "https://another-draft.example/" } });
+      await mounted.flush();
+      assert.equal(mounted.dirty, true);
+    } finally {
+      mounted.unmount();
+    }
+    assert.equal(mounted.dirty, false, "卸载后不应残留旧草稿标记");
+  });
+}
+
+test("Telegram 上报目标和页脚草稿，保存失败保留，成功和卸载后清除", async () => {
+  const Component = await loadComponent("TelegramSettingsCard");
+  const initial = { available: true, enabled: true, target: "@old_target", footerMarkdown: "old footer" };
+  let fail = true;
+  const mounted = mount(Component, {
+    save: async (next) => {
+      if (fail) throw new Error("本地模拟保存失败");
+      return { ...next, available: true };
+    }
+  }, {
+    locale: "zh", settings: initial, settingsError: null, loading: false,
+    onReload: async () => {},
+    onSettingsChange: (settings) => mounted.render({ settings })
+  });
+  try {
+    await mounted.flush();
+    assert.equal(mounted.dirty, false);
+    assert.ok(!mounted.dirtyReports.includes(true), "初始化已保存配置不应短暂报告未保存");
+    mounted.find((node) => node.type === "input")[0].props.onChange({ target: { value: "@draft_target" } });
+    await mounted.flush();
+    assert.equal(mounted.dirty, true);
+    await mounted.find((node) => node.type === "form")[0].props.onSubmit({ preventDefault() {} });
+    await mounted.flush();
+    assert.equal(mounted.dirty, true);
+    assert.equal(mounted.find((node) => node.type === "input")[0].props.value, "@draft_target");
+    fail = false;
+    await mounted.find((node) => node.type === "form")[0].props.onSubmit({ preventDefault() {} });
+    await mounted.flush();
+    assert.equal(mounted.dirty, false);
+    mounted.find((node) => node.type === "input")[1].props.onChange({ target: { value: "draft footer" } });
+    await mounted.flush();
+    assert.equal(mounted.dirty, true, "只改页脚也要提醒");
+    mounted.find((node) => node.type?.name === "SettingsStatusBadge")[0].props.onChange(false);
+    await mounted.flush();
+    assert.equal(mounted.dirty, true, "关闭服务不应清除页脚草稿提醒");
+    assert.equal(mounted.find((node) => node.type === "input")[1].props.value, "draft footer");
+  } finally {
+    mounted.unmount();
+  }
+  assert.equal(mounted.dirty, false);
+});
+
+test("服务卡草稿统一接入恢复备份提醒，不增加离开设置页拦截", async () => {
+  const source = await readFile(new URL("../../src/AdminApp.tsx", import.meta.url), "utf8");
+  const unsaved = source.match(/const hasUnsavedSettings =([\s\S]*?);/)?.[1];
+  assert.ok(unsaved);
+  for (const [name, state, callback] of [
+    ["ImageBedSettingsCard", "imageBedSettingsDirty", "setImageBedSettingsDirty"],
+    ["RssHubSettingsCard", "rssHubSettingsDirty", "setRssHubSettingsDirty"],
+    ["TelegramSettingsCard", "telegramSettingsDirty", "setTelegramSettingsDirty"]
+  ]) {
+    assert.ok(new RegExp(`<${name}\\b[^>]*onDirtyChange=\\{${callback}\\}`).test(source), `${name} 应上报草稿`);
+    assert.ok(unsaved.includes(state), `${name} 的草稿应纳入提醒判断`);
+  }
+  assert.match(source, /function requestBackupRestore\(\) \{\s*if \(hasUnsavedSettings\)/);
+  assert.equal((source.match(/\bhasUnsavedSettings\b/g) ?? []).length, 2, "未保存判断只由备份恢复调用");
 });

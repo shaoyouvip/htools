@@ -64,3 +64,29 @@ export function AdminInitialLoadError({
     </section>
   );
 }
+
+export function AdminSettingsLoadError({
+  isRetrying,
+  message,
+  onRetry,
+  retryLabel,
+  title
+}: {
+  isRetrying: boolean;
+  message: string;
+  onRetry: () => void;
+  retryLabel: string;
+  title: string;
+}) {
+  return (
+    <div aria-busy={isRetrying} className="settings-card-error" role="alert">
+      <h3>{title}</h3>
+      <p>{message}</p>
+      <button aria-busy={isRetrying} className="ghost-button" disabled={isRetrying}
+        type="button" onClick={onRetry}
+      >
+        {retryLabel}
+      </button>
+    </div>
+  );
+}

@@ -213,5 +213,5 @@ export function getCategoryLabel(category: string, t: Messages) {
     return t.tool.featured;
   }
 
-  return t.categories[category] ?? category;
+  return Object.hasOwn(t.categories, category) ? t.categories[category] : category;
 }

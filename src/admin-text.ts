@@ -56,7 +56,7 @@ export function getAdminMaintenanceText(locale: Locale) {
       siteSubtitleLabel: "\u7f51\u7ad9\u526f\u6807\u9898",
       siteIconLabel: "\u7f51\u7ad9\u56fe\u6807 URL",
       siteIconChoiceHelp:
-        "\u53ef\u586b\u5199\u56fe\u6807\u94fe\u63a5\u6216\u4e0a\u4f20\u672c\u5730\u56fe\u7247\uff0c\u652f\u6301 PNG\u3001WEBP\u3001JPG\u3001GIF\u3001ICO\uff0c\u6700\u5927 1MB\u3002",
+        "\u5efa\u8bae\u4f7f\u7528 512\u00d7512 \u900f\u660e PNG\uff1b\u4e5f\u652f\u6301 WEBP\u3001JPG\u3001GIF\u3001ICO\uff0c\u6700\u5927 1MB\u3002",
       siteIconPlaceholder: "https://example.com/icon.png",
       siteIconUpload: "选择图片",
       siteIconUploaded: "\u5df2\u4f7f\u7528\u672c\u5730\u4e0a\u4f20\u56fe\u6807",
@@ -166,7 +166,7 @@ export function getAdminMaintenanceText(locale: Locale) {
       systemGroupSecurity: "管理设置",
       unsavedTitle: "\u672a\u4fdd\u5b58\u8bbe\u7f6e",
       unsavedDescription:
-        "\u5f53\u524d\u8bbe\u7f6e\u6709\u672a\u4fdd\u5b58\u66f4\u6539\uff0c\u79bb\u5f00\u540e\u5c06\u4e22\u5931\u3002",
+        "当前有未保存的设置。恢复备份会替换这些输入，是否放弃更改并继续？",
       unsavedStay: "\u7ee7\u7eed\u7f16\u8f91",
       unsavedLeave: "\u653e\u5f03\u66f4\u6539",
       systemRetry: "重新加载",
@@ -213,9 +213,9 @@ export function getAdminMaintenanceText(locale: Locale) {
       securityUnchanged: "\u65b0\u5bc6\u7801\u4e0d\u80fd\u4e0e\u5f53\u524d\u5bc6\u7801\u76f8\u540c\u3002",
       securityUpdated: "\u7ba1\u7406\u5458\u5bc6\u7801\u5df2\u66f4\u65b0\u3002",
       backupTitle: "\u5907\u4efd\u4e0e\u6062\u590d",
-      backupDescription: "\u5728\u53d8\u66f4\u524d\u5bfc\u51fa\u5f53\u524d\u6570\u636e\uff0c\u5fc5\u8981\u65f6\u518d\u5bfc\u5165\u6062\u590d\uff0c\u51cf\u5c11\u8bef\u64cd\u4f5c\u98ce\u9669\u3002",
+      backupDescription: "备份站点内容与设置，不含密码、密钥及登录会话。",
       backupHelp:
-        "完整备份包含工具库、文章、订阅内容、Telegram 推送记录、分类和站点设置；不会导出管理员密码、Bot Token 或管理员登录会话。恢复会覆盖当前站点内容，建议先导出备份。",
+        "恢复会覆盖当前数据，请先导出备份。",
       backupExport: "\u5bfc\u51fa\u5907\u4efd",
       backupChoose: "选择文件",
       backupRestore: "\u6062\u590d\u5907\u4efd",
@@ -333,9 +333,9 @@ export function getAdminMaintenanceText(locale: Locale) {
       proxyUpdated: "\u4ee3\u7406\u8bbe\u7f6e\u5df2\u66f4\u65b0\u3002",
       resetTitle: "\u6062\u590d\u9ed8\u8ba4\u8bbe\u7f6e",
       resetDescription:
-        "\u6e05\u7a7a\u5f53\u524d\u5de5\u5177\u3001\u6587\u7ae0\u3001\u8ba2\u9605\u5185\u5bb9\u3001\u9884\u5efa\u5206\u7c7b\u548c Telegram \u63a8\u9001\u8bb0\u5f55\uff0c\u5e76\u5173\u95ed\u7ad9\u70b9\u6e90\u3002Telegram \u4e0a\u5df2\u7ecf\u53d1\u9001\u7684\u6d88\u606f\u4e0d\u4f1a\u88ab\u5220\u9664\u3002\u7cfb\u7edf\u8bbe\u7f6e\u4e2d\u7684\u7ad9\u70b9\u4fe1\u606f\u3001\u7ba1\u7406\u5458\u5bc6\u7801\u548c\u5404\u9879\u670d\u52a1\u914d\u7f6e\u90fd\u4e0d\u4f1a\u88ab\u6e05\u9664\u3002",
+        "清空工具、文章、订阅、分类和推送记录，关闭本站订阅源。",
       resetWarning:
-        "\u6b64\u64cd\u4f5c\u5c06\u5220\u9664\u6240\u6709\u5bfc\u5165\u6570\u636e\uff0c\u5efa\u8bae\u5148\u5bfc\u51fa\u5b8c\u6574\u5907\u4efd\u3002",
+        "保留系统设置、密码及 Telegram 已发消息。操作前请先备份。",
       resetButton: "恢复默认",
       resetConfirm:
         "\u786e\u5b9a\u8981\u6062\u590d\u9ed8\u8ba4\u8bbe\u7f6e\u5417\uff1f\u8fd9\u5c06\u5220\u9664\u5de5\u5177\u3001\u6587\u7ae0\u3001\u8ba2\u9605\u5185\u5bb9\u548c\u9884\u5efa\u5206\u7c7b\uff0c\u5e76\u5173\u95ed\u7ad9\u70b9\u6e90\u3002",
@@ -433,7 +433,7 @@ export function getAdminMaintenanceText(locale: Locale) {
     systemGroupSecurity: "Management Settings",
     unsavedTitle: "Unsaved Settings",
     unsavedDescription:
-      "You have unsaved settings changes. Leaving this section will discard them.",
+      "You have unsaved settings. Restoring a backup will replace these inputs. Discard changes and continue?",
     unsavedStay: "Keep Editing",
     unsavedLeave: "Discard Changes",
     systemRetry: "Reload",
@@ -471,7 +471,7 @@ export function getAdminMaintenanceText(locale: Locale) {
     siteSubtitleLabel: "Site subtitle",
     siteIconLabel: "Site icon URL",
     siteIconChoiceHelp:
-      "Enter an icon URL or upload a PNG, WEBP, JPG, GIF, or ICO image up to 1MB.",
+      "Use a 512\u00d7512 transparent PNG. WEBP, JPG, GIF, and ICO up to 1MB are also supported.",
     siteIconPlaceholder: "https://example.com/icon.png",
     siteIconUpload: "Choose Image",
     siteIconUploaded: "Using uploaded local icon",
@@ -553,9 +553,9 @@ export function getAdminMaintenanceText(locale: Locale) {
     securityUpdated: "Admin password updated.",
     backupTitle: "Backup and Restore",
     backupDescription:
-      "Export the current data before changes, then import it back if needed to reduce accidental-operation risk.",
+      "Back up site content and settings, excluding passwords, secrets, and login sessions.",
     backupHelp:
-      "A full backup includes tools, articles, subscription content, Telegram push records, categories, and site settings. Admin passwords, bot tokens, and administrator login sessions are not exported. Restore overwrites the current site content.",
+      "Restoring overwrites current data. Export a backup first.",
     backupExport: "Export Backup",
     backupChoose: "Choose File",
     backupRestore: "Restore Backup",
@@ -682,8 +682,8 @@ export function getAdminMaintenanceText(locale: Locale) {
     proxyUpdated: "Proxy settings updated.",
     resetTitle: "Restore Defaults",
     resetDescription:
-      "Clear tools, articles, subscription content, saved categories, and Telegram push records, then disable the site source. Messages already sent to Telegram are not deleted. Site details, the admin password, and every service configuration in system settings are kept.",
-    resetWarning: "This will delete all imported data. Export a full backup first if needed.",
+      "Clear tools, articles, subscriptions, categories, and push records. Disable the site's subscription feed.",
+    resetWarning: "Keep system settings, passwords, and sent Telegram messages. Back up first.",
     resetButton: "Restore",
     resetConfirm:
       "Restore defaults? This will delete tools, articles, subscription content, saved categories, and disable the site source.",

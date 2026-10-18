@@ -1603,9 +1603,9 @@ html[data-theme="dark"] .global-search-shortcut {
 }
 
 .brand-mark.has-site-icon {
-  overflow: hidden;
-  border-color: var(--border-soft);
-  background: var(--surface);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: #09090b;
   padding: 0;
   box-shadow: none;
@@ -1923,7 +1923,8 @@ html[data-theme="dark"] .global-search-shortcut {
 }
 
 .menu-option:hover,
-.menu-option:focus-visible {
+.menu-option:focus-visible,
+.admin-category-icon-choice[aria-pressed="true"] {
   border-color: transparent;
   background: var(--admin-borderless-hover-bg);
   outline: 0;
@@ -2578,6 +2579,34 @@ html[data-theme="dark"] .mobile-nav-drawer {
   overflow: hidden;
 }
 
+.category-icon {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.category-icon > svg {
+  width: 100%;
+  height: 100%;
+  flex: 0 0 auto;
+}
+
+.category-icon-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+html[data-theme="dark"] .category-icon-image.is-current-color {
+  filter: invert(1);
+}
+
 .category-item {
   display: flex;
   align-items: center;
@@ -2628,7 +2657,8 @@ html[data-theme="dark"] .mobile-nav-drawer {
    这里按 .admin-category-filter-trigger 的同一份约定补内描边：只用 outline，
    不动背景，避免和已有的半透明灰底叠成两层。选择器写在共用块之后、特异性相同，
    所以对 .is-active 的标签也能盖住那条 outline: 0。 */
-.category-item:focus-visible {
+.category-item:focus-visible,
+.admin-category-icon-choice:focus-visible {
   outline: 2px solid var(--text);
   outline-offset: -3px;
 }
@@ -4512,7 +4542,7 @@ html[data-theme="light"] .admin-workspace {
 
 .admin-category-filter-option {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
   align-items: center;
   gap: 4px;
   border-radius: 6px;
@@ -4557,6 +4587,22 @@ html[data-theme="light"] .admin-workspace {
   justify-content: center;
   color: var(--muted);
   padding: 0;
+}
+
+.admin-category-filter-list .admin-category-icon-button {
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  justify-content: center;
+  padding: 0;
+}
+
+.admin-category-icon-static {
+  display: inline-flex;
+  width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
 }
 
 .admin-category-option-actions {
@@ -4604,6 +4650,10 @@ html[data-theme="light"] .admin-workspace {
 
 .admin-category-filter-list .admin-category-move-option svg {
   opacity: 0.72;
+}
+
+.admin-category-filter-list .category-icon svg {
+  opacity: 1;
 }
 
 .admin-category-filter-list .admin-category-delete-option:hover svg,
@@ -5973,6 +6023,125 @@ html[data-theme="dark"] .telegram-message-count .is-invalid {
   line-height: 1;
 }
 
+.admin-segmented-toggle.admin-category-icon-mode {
+  width: 100%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.admin-segmented-toggle.admin-category-icon-mode button {
+  min-width: 0;
+  padding-inline: 8px;
+}
+
+.admin-category-icon-stage {
+  display: flex;
+  min-width: 0;
+  height: 264px;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-category-icon-stage > input {
+  flex: 0 0 auto;
+}
+
+.admin-category-icon-stage > .tool-form-field {
+  min-height: 0;
+  align-content: start;
+  overflow-y: auto;
+}
+
+.tool-editor-dialog .tool-form textarea.admin-category-icon-url {
+  height: 132px;
+  min-height: 132px;
+  resize: none;
+}
+
+.admin-category-icon-grid {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  align-content: start;
+  gap: 8px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.menu-option.admin-category-icon-choice {
+  width: 100%;
+  height: 44px;
+  min-height: 44px;
+  justify-content: center;
+  padding: 0;
+}
+
+.admin-category-icon-default {
+  display: grid;
+  height: 100%;
+  align-content: center;
+  justify-items: center;
+  gap: 18px;
+  text-align: center;
+}
+
+.admin-category-icon-default p,
+.admin-category-icon-empty,
+.admin-category-icon-hint,
+.admin-category-icon-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.admin-category-icon-empty {
+  grid-column: 1 / -1;
+  padding-block: 16px;
+}
+
+.admin-category-icon-preview {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.admin-category-icon-preview > span {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.admin-category-icon-preview > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.admin-category-icon-preview strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-category-icon-status {
+  min-height: 2.8em;
+}
+
+.admin-category-icon-restore {
+  margin-right: auto;
+}
+
 .admin-resource-input-row,
 .admin-markdown-editor-input-row {
   display: flex;
@@ -6063,6 +6232,11 @@ html[data-theme="dark"] .telegram-message-count .is-invalid {
   background: var(--admin-borderless-hover-bg);
   color: var(--text);
   outline: 0;
+}
+
+.admin-segmented-toggle.admin-category-icon-mode button:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: -3px;
 }
 
 .admin-segmented-toggle.field-assist-toggle {
@@ -8475,12 +8649,13 @@ html[data-theme="dark"] .admin-workspace .link-check-table th {
 
 .content-source-group-main {
   min-width: 0;
+  gap: 8px;
   touch-action: manipulation;
   user-select: none;
 }
 
 .content-source-group-main > .content-source-group-copy {
-  width: 100%;
+  flex: 1 1 auto;
 }
 
 .content-source-group-toggle:focus-visible,

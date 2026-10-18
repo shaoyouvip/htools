@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { loadImageBedSettings, saveImageBedSettings } from "../../admin-api";
 import { getLocalizedErrorMessage } from "../../site-helpers";
+import { AdminSettingsLoadError } from "../AdminPanelStates";
 import {
   AdminSkeletonLines,
   getAdminLoadingProps
@@ -32,12 +33,14 @@ const IMAGE_BED_UPLOAD_NAME_TYPES: ImageBedUploadNameType[] = [
 
 export function ImageBedSettingsCard({
   maintenanceText,
+  onDirtyChange,
   reloadKey,
   setStatus,
   t,
   token
 }: {
   maintenanceText: ReturnType<typeof getAdminMaintenanceText>;
+  onDirtyChange: (dirty: boolean) => void;
   reloadKey: number;
   setStatus: (status: string) => void;
   t: Messages;
@@ -55,7 +58,7 @@ export function ImageBedSettingsCard({
   const [form, setForm] = useState(emptyForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [loadError, setLoadError] = useState("");
+  const [loadError, setLoadError] = useState<unknown>(null);
   const loadRequestRef = useRef(0);
 
   function applySettings(next: ImageBedSettings, syncForm = true) {
@@ -69,14 +72,14 @@ export function ImageBedSettingsCard({
   async function loadSettings(signal?: AbortSignal) {
     const requestId = ++loadRequestRef.current;
     setLoading(true);
-    setLoadError("");
     try {
       const loaded = await loadImageBedSettings(token, { signal });
       if (signal?.aborted || loadRequestRef.current !== requestId) return;
       applySettings(loaded);
+      setLoadError(null);
     } catch (error) {
       if (!signal?.aborted && loadRequestRef.current === requestId) {
-        setLoadError(getLocalizedErrorMessage(error, t));
+        setLoadError(error);
       }
     } finally {
       if (!signal?.aborted && loadRequestRef.current === requestId) setLoading(false);
@@ -100,6 +103,17 @@ export function ImageBedSettingsCard({
     form.uploadNameType !== settings.uploadNameType ||
     form.uploadFolder.trim().replace(/^\/+|\/+$/g, "") !== settings.uploadFolder
   ));
+
+  useEffect(() => {
+    onDirtyChange(dirty);
+  }, [dirty, onDirtyChange]);
+
+  useEffect(
+    () => () => {
+      onDirtyChange(false);
+    },
+    [onDirtyChange]
+  );
 
   async function persist(
     next: Omit<ImageBedSettings, "available">,
@@ -155,15 +169,15 @@ export function ImageBedSettingsCard({
   }
 
   return (
-    <article className="source-public-card image-bed-settings-card" {...getAdminLoadingProps(loading)}>
-      {!loading && loadError ? (
-        <div className="settings-card-error" role="alert">
-          <h3>{maintenanceText.imageBedTitle}</h3>
-          <p>{loadError}</p>
-          <button className="ghost-button" type="button" onClick={() => void loadSettings()}>
-            {maintenanceText.systemRetry}
-          </button>
-        </div>
+    <article className="source-public-card image-bed-settings-card" {...getAdminLoadingProps(loading && !loadError)}>
+      {loadError ? (
+        <AdminSettingsLoadError
+          isRetrying={loading}
+          message={getLocalizedErrorMessage(loadError, t)}
+          onRetry={() => void loadSettings()}
+          retryLabel={maintenanceText.systemRetry}
+          title={maintenanceText.imageBedTitle}
+        />
       ) : (
         <>
           <div className="source-card-heading">
@@ -257,7 +271,7 @@ export function ImageBedSettingsCard({
           </form>
         </>
       )}
-      <AdminSkeletonLines loading={loading} />
+      <AdminSkeletonLines loading={loading && !loadError} />
     </article>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { loadRssHubSettings, saveRssHubSettings } from "../../admin-api";
 import { getLocalizedErrorMessage } from "../../site-helpers";
+import { AdminSettingsLoadError } from "../AdminPanelStates";
 import { normalizeRssHubBaseUrl } from "../../../shared/rsshub";
 import {
   AdminSkeletonLines,
@@ -13,12 +14,14 @@ import type { RssHubSettings } from "../../types";
 
 export function RssHubSettingsCard({
   maintenanceText,
+  onDirtyChange,
   reloadKey,
   setStatus,
   t,
   token
 }: {
   maintenanceText: ReturnType<typeof getAdminMaintenanceText>;
+  onDirtyChange: (dirty: boolean) => void;
   reloadKey: number;
   setStatus: (status: string) => void;
   t: Messages;
@@ -28,21 +31,33 @@ export function RssHubSettingsCard({
   const [baseUrl, setBaseUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [loadError, setLoadError] = useState("");
+  const [loadError, setLoadError] = useState<unknown>(null);
   const loadRequestRef = useRef(0);
+  const dirty = Boolean(settings && baseUrl.trim() !== settings.baseUrl);
+
+  useEffect(() => {
+    onDirtyChange(dirty);
+  }, [dirty, onDirtyChange]);
+
+  useEffect(
+    () => () => {
+      onDirtyChange(false);
+    },
+    [onDirtyChange]
+  );
 
   async function loadSettings(signal?: AbortSignal) {
     const requestId = ++loadRequestRef.current;
     setLoading(true);
-    setLoadError("");
     try {
       const loaded = await loadRssHubSettings(token, { signal });
       if (signal?.aborted || loadRequestRef.current !== requestId) return;
       setSettings(loaded);
       setBaseUrl(loaded.baseUrl);
+      setLoadError(null);
     } catch (error) {
       if (!signal?.aborted && loadRequestRef.current === requestId) {
-        setLoadError(getLocalizedErrorMessage(error, t));
+        setLoadError(error);
       }
     } finally {
       if (!signal?.aborted && loadRequestRef.current === requestId) setLoading(false);
@@ -98,21 +113,19 @@ export function RssHubSettingsCard({
     }
   }
 
-  if (!loading && loadError) {
+  if (loadError) {
     return (
       <article className="source-public-card rsshub-settings-card">
-        <div className="settings-card-error" role="alert">
-          <h3>{maintenanceText.rssHubTitle}</h3>
-          <p>{loadError}</p>
-          <button className="ghost-button" type="button" onClick={() => void loadSettings()}>
-            {maintenanceText.systemRetry}
-          </button>
-        </div>
+        <AdminSettingsLoadError
+          isRetrying={loading}
+          message={getLocalizedErrorMessage(loadError, t)}
+          onRetry={() => void loadSettings()}
+          retryLabel={maintenanceText.systemRetry}
+          title={maintenanceText.rssHubTitle}
+        />
       </article>
     );
   }
-
-  const dirty = baseUrl.trim() !== (settings?.baseUrl ?? "");
 
   return (
     <article className="source-public-card rsshub-settings-card" {...getAdminLoadingProps(loading)}>

@@ -6,6 +6,8 @@ import {
 } from "./_shared";
 import { getEffectiveTags } from "../shared/effective-tags";
 
+const DEFAULT_PUBLIC_LOGO_PATH = "/htools-logo.png";
+
 export type PublicArticleMetadata = {
   url: string;
   image: string;
@@ -126,13 +128,13 @@ export async function loadPublicSiteIdentity(
     return {
       name: site.name,
       subtitle: site.subtitle,
-      iconUrl: site.iconUrl
+      iconUrl: site.iconUrl || DEFAULT_PUBLIC_LOGO_PATH
     };
   } catch {
     return {
       name: "HTools",
       subtitle: "工具导航站",
-      iconUrl: ""
+      iconUrl: DEFAULT_PUBLIC_LOGO_PATH
     };
   }
 }

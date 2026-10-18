@@ -87,11 +87,20 @@ test("public and admin UI do not display raw caught API messages", () => {
     /setStatus\(error instanceof Error \? error\.message/
   );
   assert.match(appSource, /setToolLoadError\(getLocalizedErrorMessage\(error, t\)\)/);
-  assert.match(appSource, /toolLoadError\s*\? toolLoadError/);
-  assert.match(appSource, /articleError\s*\? articleError/);
-  assert.match(appSource, /error\s*\? error/);
+  for (const field of ["toolLoadError", "articleError", "error", "loadErrorMessage"]) {
+    assert.match(appSource, new RegExp(`<PublicLoadError[^>]*message=\\{${field}\\}`));
+  }
   assert.doesNotMatch(
     appSource,
     /toolLoadError\s*\? t\.empty\.connectionDescription/
   );
+});
+
+test("shared network failures stay localized across public, settings, feed, and link-check paths", () => {
+  assert.match(siteHelpersSource, /return t\.errors\.networkError/);
+  assert.doesNotMatch(siteHelpersSource, /本地预览服务|local preview server/);
+  assert.doesNotMatch(adminSource, /return message \|\| fallback/);
+  assert.match(adminSource, /getLocalizedErrorMessage\(error, t, fallback\)/);
+  assert.match(adminSource, /getLinkCheckErrorText\(result, t\)/);
+  assert.match(adminSource, /result\.status === 0 \? t\.errors\.networkError/);
 });

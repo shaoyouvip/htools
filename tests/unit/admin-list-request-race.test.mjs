@@ -613,3 +613,111 @@ test("推送面板在空列表重试时仍显示公共错误态，首次无错�
   assert.equal(React.Children.toArray(initial.props.children)[0].type, Skeleton);
   assert.match(renderToStaticMarkup(initial), /data-skeleton/);
 });
+
+function createCategoryIconRuntime() {
+  const names = ["refreshAdminCategories", "editCategoryIcon", "submitCategoryIcon"];
+  const functions = extractFunctions(adminSource, names);
+  const program = ts.transpileModule(functions, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext }
+  }).outputText;
+  const scope = {
+    token: "本地测试凭据",
+    editingCategoryIcon: { scope: "tools", category: "开发" },
+    isApplyingCategoryAction: false,
+    adminCategoryIconsReady: true,
+    adminCategoryIcons: { tools: {}, articles: {}, push: {}, content: {} },
+    categoryIconSaveRef: { current: false }, categoryIconGenerationRef: { current: 0 },
+    adminCategoryLoadRequestRef: { current: 0 },
+    adminCategorySaveGenerationRef: { current: { tools: 0, articles: 0, push: 0, content: 0 } },
+    t: { categoryIcons: { saved: "已保存", saveFailed: "保存失败" } },
+    categoryText: { loadFailed: "加载失败" },
+    getLocalizedErrorMessage: (error) => error.message,
+    isEditableCategoryIconCategory: () => true,
+    document: { activeElement: null },
+    getDialogReturnFocusTarget: () => null,
+    rememberNextDialogReturnFocus: () => {},
+    commitAdminCategorySettings(value) { this.settings = value; }
+  };
+  for (const [, name] of functions.matchAll(/\b(set[A-Z]\w*)\(/g)) {
+    const key = name[3].toLowerCase() + name.slice(4);
+    scope[name] = (value) => { scope[key] = value; };
+  }
+  const actions = new Function("scope", `with (scope) { ${program}; return { ${names.join(",")} }; }`)(scope);
+  return { scope, actions };
+}
+
+test("分类图标保存防止连点，旧分类读取不能覆盖已保存的新图标", async () => {
+  const { scope, actions } = createCategoryIconRuntime();
+  const reading = pendingResult();
+  scope.loadAdminCategoryConfiguration = () => reading.promise;
+  const refresh = actions.refreshAdminCategories();
+  const saving = pendingResult();
+  const requests = [];
+  scope.saveAdminCategoryIcon = (...args) => { requests.push(args); return saving.promise; };
+  const icon = { type: "lucide", value: "folder" };
+  const save = actions.submitCategoryIcon(icon);
+  await actions.submitCategoryIcon(icon);
+  assert.equal(requests.length, 1);
+  assert.equal(scope.categoryIconSaving, true);
+  const current = { ...scope.adminCategoryIcons, tools: { 开发: icon } };
+  saving.resolve(current);
+  await save;
+  reading.resolve({ settings: {}, icons: { tools: {}, articles: {}, push: {}, content: {} } });
+  await refresh;
+  assert.deepEqual(scope.adminCategoryIcons, current);
+  assert.equal(scope.categoryIconSaving, false);
+  assert.equal(scope.editingCategoryIcon, null);
+});
+
+test("分类图标保存失败保持编辑目标和原图标并释放保存锁", async () => {
+  const { scope, actions } = createCategoryIconRuntime();
+  scope.saveAdminCategoryIcon = async () => { throw new Error("本地模拟失败"); };
+  const original = scope.adminCategoryIcons;
+  await actions.submitCategoryIcon({ type: "lucide", value: "folder" });
+  assert.equal(scope.adminCategoryIcons, original);
+  assert.deepEqual(scope.editingCategoryIcon, { scope: "tools", category: "开发" });
+  assert.equal(scope.categoryIconError, "本地模拟失败");
+  assert.equal(scope.categoryIconSaving, false);
+  assert.equal(scope.categoryIconSaveRef.current, false);
+});
+
+test("分类迁移进行期间不能打开图标编辑器", async () => {
+  const { scope, actions } = createCategoryIconRuntime();
+  scope.editingCategoryIcon = null;
+  scope.isApplyingCategoryAction = true;
+  await actions.editCategoryIcon("tools", "开发");
+  assert.equal(scope.editingCategoryIcon, null);
+});
+
+test("凭据更换清除图标保存状态并忽略旧保存响应", async () => {
+  const { scope, actions } = createCategoryIconRuntime();
+  const tree = ts.createSourceFile("AdminApp.tsx", adminSource, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+  let callback;
+  function visit(node) {
+    if (ts.isCallExpression(node) && node.expression.getText(tree) === "useEffect" &&
+        node.arguments[1]?.getText(tree) === "[token]" &&
+        node.arguments[0]?.getText(tree).includes("categoryIconGenerationRef.current += 1") &&
+        node.arguments[0]?.getText(tree).includes("return () =>")) {
+      callback = node.arguments[0].getText(tree);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(tree);
+  assert.ok(callback);
+  const effect = new Function("scope", `with (scope) { return (${callback}); }`)(scope);
+  const cleanup = effect();
+  scope.editingCategoryIcon = { scope: "tools", category: "开发" };
+  const pending = pendingResult();
+  scope.saveAdminCategoryIcon = () => pending.promise;
+  const save = actions.submitCategoryIcon({ type: "lucide", value: "folder" });
+  assert.equal(scope.categoryIconSaving, true);
+  cleanup();
+  effect();
+  const original = scope.adminCategoryIcons;
+  pending.resolve({ tools: { 开发: { type: "lucide", value: "folder" } }, articles: {}, push: {}, content: {} });
+  await save;
+  assert.equal(scope.categoryIconSaving, false);
+  assert.equal(scope.categoryIconSaveRef.current, false);
+  assert.equal(scope.editingCategoryIcon, null);
+  assert.equal(scope.adminCategoryIcons, original);
+});

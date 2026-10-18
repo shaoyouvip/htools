@@ -3,6 +3,7 @@ import { after, test } from "node:test";
 import { compileTypescriptModule } from "../helpers/compile-typescript.mjs";
 
 const stub = (body) => `data:text/javascript,${encodeURIComponent(body)}`;
+const inlineLogoFallback = "data:image/png;base64,builtin-logo-fixture";
 const i18nStub = stub(`
   const make = (p) => ({
     nav: { tools: p + "工具", articles: p + "文章" },
@@ -13,6 +14,7 @@ const i18nStub = stub(`
     },
     errors: {
       requestFailed: p + "请求失败",
+      networkError: p + "网络连接失败",
       unauthorized: p + "未授权",
       forbidden: p + "禁止访问",
       notFound: p + "未找到",
@@ -51,6 +53,9 @@ const compiledSiteHelpers = await compileTypescriptModule(
       "./legal-content": stub(
         `export function getDefaultLegalMarkdown(kind, locale, siteName) {` +
           ` return "# " + kind + "/" + locale + "/" + siteName; }`
+      ),
+      "./site-logo-fallback": stub(
+        `export const SITE_LOGO_FALLBACK_DATA_URL = ${JSON.stringify(inlineLogoFallback)};`
       )
     }
   }
@@ -59,6 +64,166 @@ const siteHelpers = await import(`${compiledSiteHelpers.url.href}?site-settings=
 const { translations } = await import(i18nStub);
 const DEFAULT_FOOTER = siteHelpers.DEFAULT_FOOTER_SETTINGS;
 const emptySite = { name: "", subtitle: "", iconUrl: "" };
+
+test("the built-in logo is a visual fallback and never replaces a custom icon", () => {
+  assert.equal(siteHelpers.DEFAULT_SITE_SETTINGS.iconUrl, "");
+  assert.equal(siteHelpers.DEFAULT_SITE_ICON_URL, "/htools-logo.png");
+  assert.equal(
+    siteHelpers.getEditableSiteSettings({
+      ...emptySite,
+      name: "Custom HTools",
+      subtitle: "Custom subtitle",
+      iconUrl: "https://example.com/custom-logo.png"
+    }).iconUrl,
+    "https://example.com/custom-logo.png"
+  );
+});
+
+function createFaviconEnvironment(t) {
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const previousImage = Object.getOwnPropertyDescriptor(globalThis, "Image");
+  const links = [];
+  const images = [];
+  globalThis.document = {
+    head: {
+      querySelector: () => links[0] ?? null,
+      appendChild: (link) => links.push(link)
+    },
+    createElement: () => ({
+      dataset: {},
+      attributes: new Map(),
+      setAttribute(name, value) { this.attributes.set(name, value); },
+      removeAttribute(name) { this.attributes.delete(name); delete this[name]; }
+    })
+  };
+  globalThis.Image = class {
+    onload = null;
+    onerror = null;
+    constructor() { images.push(this); }
+  };
+  t.after(() => {
+    for (const [key, descriptor] of [["document", previousDocument], ["Image", previousImage]]) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+  });
+  return { links, images };
+}
+
+test("site icon retry parameters preserve existing query and hash and skip image data", () => {
+  const dataUrl = "data:image/png;base64,invalid";
+  assert.equal(siteHelpers.isSiteIconDataUrl(`  ${dataUrl}  `), true);
+  assert.equal(siteHelpers.isSiteIconDataUrl("https://example.com/logo.png"), false);
+  assert.equal(siteHelpers.addSiteIconRetryParam(dataUrl, 123), dataUrl);
+  assert.equal(siteHelpers.addSiteIconRetryParam("/htools-logo.png", 123), "/htools-logo.png");
+  assert.equal(siteHelpers.addSiteIconRetryParam("https://example.com/logo.png", 0), "https://example.com/logo.png");
+  const retried = new URL(siteHelpers.addSiteIconRetryParam("https://example.com/logo.png?a=1#logo", 123));
+  assert.equal(retried.searchParams.get("a"), "1");
+  assert.equal(retried.searchParams.get("htools_icon_retry"), "123");
+  assert.equal(retried.hash, "#logo");
+});
+
+test("empty favicon checks the round brand asset and keeps it when it loads", (t) => {
+  const { links, images } = createFaviconEnvironment(t);
+  const cleanup = siteHelpers.syncSiteFavicon("  ");
+  assert.equal(links[0].href, "/htools-logo.png");
+  assert.equal(images.length, 1);
+  assert.equal(images[0].src, "/htools-logo.png");
+  images[0].onload();
+  assert.equal(links[0].type, "image/png");
+  assert.equal(links[0].attributes.get("sizes"), "512x512");
+  assert.equal(images[0].onload, null);
+  assert.equal(images[0].onerror, null);
+  cleanup();
+});
+
+test("a successful custom favicon retry displays its actual loaded URL", (t) => {
+  const { links, images } = createFaviconEnvironment(t);
+  const cleanup = siteHelpers.syncSiteFavicon("https://example.com/logo.png?a=1#logo");
+  const oldLoad = images[0].onload;
+  const oldError = images[0].onerror;
+  oldError();
+  assert.equal(images.length, 2);
+  const retried = new URL(images[1].src);
+  assert.equal(retried.searchParams.get("a"), "1");
+  assert.ok(retried.searchParams.get("htools_icon_retry"));
+  images[1].onload();
+  assert.equal(links[0].href, images[1].src);
+  oldLoad();
+  oldError();
+  assert.equal(links[0].href, images[1].src);
+  assert.equal(images.length, 2);
+  cleanup();
+});
+
+test("failed custom favicon retries once before the brand asset and a new icon still takes priority", (t) => {
+  const { links, images } = createFaviconEnvironment(t);
+  const cleanup = siteHelpers.syncSiteFavicon(" https://example.com/broken.png ");
+  assert.equal(links[0].href, "https://example.com/broken.png");
+  assert.equal(images[0].src, "https://example.com/broken.png");
+  images[0].onerror();
+  assert.equal(new URL(images[1].src).pathname, "/broken.png");
+  images[1].onerror();
+  assert.equal(images[2].src, "/htools-logo.png");
+  images[2].onload();
+  assert.equal(links[0].href, "/htools-logo.png");
+  assert.equal(links[0].type, "image/png");
+  assert.equal(images.length, 3);
+  cleanup();
+
+  const nextCleanup = siteHelpers.syncSiteFavicon("https://example.com/new.png");
+  assert.equal(links.length, 1);
+  assert.equal(links[0].href, "https://example.com/new.png");
+  assert.equal(links[0].type, undefined);
+  assert.equal(links[0].attributes.has("sizes"), false);
+  images[3].onload();
+  assert.equal(links[0].href, "https://example.com/new.png");
+  nextCleanup();
+});
+
+test("a failed default favicon stops at the embedded brand without looping", (t) => {
+  const { links, images } = createFaviconEnvironment(t);
+  const cleanup = siteHelpers.syncSiteFavicon("");
+  const oldError = images[0].onerror;
+  const oldLoad = images[0].onload;
+  oldError();
+  assert.equal(links[0].href, inlineLogoFallback);
+  assert.equal(images.length, 1);
+  oldLoad();
+  oldError();
+  assert.equal(links[0].href, inlineLogoFallback);
+  assert.equal(images.length, 1);
+  cleanup();
+});
+
+test("invalid image data skips a retry and falls through the default to the embedded brand", (t) => {
+  const { links, images } = createFaviconEnvironment(t);
+  const cleanup = siteHelpers.syncSiteFavicon("data:image/png;base64,invalid");
+  images[0].onerror();
+  assert.equal(images[1].src, "/htools-logo.png");
+  images[1].onerror();
+  assert.equal(links[0].href, inlineLogoFallback);
+  assert.equal(images.length, 2);
+  cleanup();
+});
+
+test("cleanup prevents old favicon load and error callbacks from replacing a newer icon", (t) => {
+  const { links, images } = createFaviconEnvironment(t);
+  const cleanup = siteHelpers.syncSiteFavicon("https://example.com/old.png");
+  images[0].onerror();
+  const oldError = images[1].onerror;
+  const oldLoad = images[1].onload;
+  cleanup();
+  assert.equal(images[1].onerror, null);
+  assert.equal(images[1].onload, null);
+  const nextCleanup = siteHelpers.syncSiteFavicon("data:image/png;base64,new");
+  images[2].onload();
+  oldError();
+  oldLoad();
+  assert.equal(links[0].href, "data:image/png;base64,new");
+  assert.equal(images.length, 3);
+  nextCleanup();
+});
 
 function errorWith(fields) {
   return Object.assign(new Error(fields.message ?? "unmapped"), fields);
@@ -456,6 +621,14 @@ test("HTTP status codes provide the fallback mapping when no code is present", (
 });
 
 test("business error codes and mapped English messages differ per locale", () => {
+  for (const [locale, expected] of [
+    ["zh", "分类图标容量已满，请恢复部分图标为默认，或简化 SVG 代码。"],
+    ["en", "Category icon capacity is full. Restore some icons to default or simplify the SVG code."]
+  ]) {
+    assert.equal(siteHelpers.getLocalizedErrorMessage(
+      errorWith({ code: "CATEGORY_ICONS_CAPACITY", status: 400 }), translations[locale]
+    ), expected);
+  }
   assert.equal(
     siteHelpers.getLocalizedErrorMessage(errorWith({ code: "INVALID_PASSWORD" }), translations.zh),
     "密码不正确。"
@@ -482,6 +655,28 @@ test("business error codes and mapped English messages differ per locale", () =>
       translations.zh
     ),
     "GitHub API 请求失败：503"
+  );
+});
+
+test("network failures use deployment-neutral public copy", () => {
+  for (const message of [
+    "Failed to fetch",
+    "Network request failed.",
+    "NetworkError when attempting to fetch resource.",
+    "Load failed"
+  ]) {
+    assert.equal(
+      siteHelpers.getLocalizedErrorMessage(new Error(message), translations.zh),
+      translations.zh.errors.networkError
+    );
+    assert.equal(
+      siteHelpers.getLocalizedErrorMessage(new Error(message), translations.en),
+      translations.en.errors.networkError
+    );
+  }
+  assert.doesNotMatch(
+    siteHelpers.getLocalizedErrorMessage(new Error("Failed to fetch"), translations.zh),
+    /本地预览|localhost|127\.0\.0\.1/
   );
 });
 

@@ -1,3 +1,5 @@
+import type { CategoryIconName } from "../category-icon-settings";
+
 export type Locale = "zh" | "en";
 
 export type LocaleOption = {
@@ -9,6 +11,32 @@ export type LocaleOption = {
 
 export type Messages = {
   brand: string;
+  categoryIcons: {
+    title: (category: string) => string;
+    edit: (category: string) => string;
+    description: string;
+    modeLabel: string;
+    defaultMode: string;
+    lucideMode: string;
+    imageMode: string;
+    defaultHint: string;
+    searchPlaceholder: string;
+    noResults: string;
+    imageUrlLabel: string;
+    imageUrlPlaceholder: string;
+    imageHint: string;
+    invalidImageUrl: string;
+    imageLoadFailed: string;
+    imageLoading: string;
+    preview: string;
+    restoreDefault: string;
+    save: string;
+    saving: string;
+    saved: string;
+    saveFailed: string;
+    loadFailed: string;
+    iconNames: Record<CategoryIconName, string>;
+  };
   nav: {
     category: string;
     articles: string;
@@ -152,6 +180,9 @@ export type Messages = {
   tool: {
     featured: string;
     previewAlt: (name: string) => string;
+  };
+  markdownCode: {
+    copyFailed: string;
   };
   markdownEditor: {
     modeLabel: string;
@@ -303,6 +334,7 @@ export type Messages = {
   };
   errors: {
     requestFailed: string;
+    networkError: string;
     timeout: string;
     unauthorized: string;
     forbidden: string;

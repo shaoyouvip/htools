@@ -13,6 +13,30 @@ export async function compileTypescriptModule(
   const replacements = { ...importReplacements };
   const dependencies = [];
 
+  for (const match of source.matchAll(/from\s+["']([^"']*\/(?:category-icon-settings|category-svg))["']/g)) {
+    const specifier = match[1];
+    if (replacements[specifier]) continue;
+    const icons = await compileTypescriptModule(new URL(`${specifier}.ts`, sourceUrl));
+    replacements[specifier] = icons.url.href;
+    dependencies.push(icons);
+  }
+
+  for (const match of source.matchAll(/from\s+["']([^"']*\/_category-icons)["']/g)) {
+    const specifier = match[1];
+    if (replacements[specifier]) continue;
+    let sharedUrl = replacements[specifier.replace(/_category-icons$/, "_shared")];
+    if (!sharedUrl) {
+      const shared = await compileTypescriptModule(new URL(`${specifier.replace(/_category-icons$/, "_shared")}.ts`, sourceUrl));
+      dependencies.push(shared);
+      sharedUrl = shared.url.href;
+    }
+    const icons = await compileTypescriptModule(new URL(`${specifier}.ts`, sourceUrl), {
+      importReplacements: { "./_shared": sharedUrl }
+    });
+    replacements[specifier] = icons.url.href;
+    dependencies.push(icons);
+  }
+
   if (
     basename(sourceUrl.pathname) === "_shared.ts" &&
     !replacements["../shared/admin-ai"]

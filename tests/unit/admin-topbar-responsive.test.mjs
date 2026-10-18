@@ -13,7 +13,7 @@ test("mobile admin topbar keeps two stable rows with compact text actions", () =
   assert.match(adminSource, /admin-create-label-compact[\s\S]*?t\.actions\.add/);
   assert.match(adminSource, /admin-sort-label-compact[\s\S]*?shortLabel/);
   assert.match(adminSource, /admin-clear-filter[\s\S]*?<Eraser size=\{16\}[\s\S]*?<span>/);
-  assert.match(adminSource, /admin-category-filter-trigger[\s\S]*?<Tags size=\{16\}/);
+  assert.match(adminSource, /admin-category-filter-trigger[\s\S]*?<CategoryIcon[^>]*size=\{16\}/);
   assert.match(
     styles,
     /@media \(max-width: 920px\)[\s\S]*?\.admin-topbar-actions\s*\{[\s\S]*?grid-template-columns:\s*auto auto minmax\(0, 1fr\)/

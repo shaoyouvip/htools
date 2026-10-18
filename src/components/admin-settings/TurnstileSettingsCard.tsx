@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { loadTurnstileSettings, saveTurnstileSettings } from "../../admin-api";
 import { getLocalizedErrorMessage } from "../../site-helpers";
+import { AdminSettingsLoadError } from "../AdminPanelStates";
 import { useLoadingSkeleton } from "../../useLoadingSkeleton";
 import {
   AdminSkeletonLines,
@@ -27,28 +28,35 @@ export function TurnstileSettingsCard({
   const [settings, setSettings] = useState<TurnstileSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [loadError, setLoadError] = useState("");
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const loadRequestRef = useRef(0);
   const writeInProgressRef = useRef(false);
   const showSkeleton = useLoadingSkeleton(loading, 0);
 
   async function loadSettings(signal?: AbortSignal) {
+    const requestId = ++loadRequestRef.current;
     setLoading(true);
-    setLoadError("");
     try {
       const loaded = await loadTurnstileSettings(token, { signal });
-      if (signal?.aborted) return;
+      if (signal?.aborted || loadRequestRef.current !== requestId) return;
       setSettings(loaded);
+      setLoadError(null);
     } catch (error) {
-      if (!signal?.aborted) setLoadError(getLocalizedErrorMessage(error, t));
+      if (!signal?.aborted && loadRequestRef.current === requestId) {
+        setLoadError(error);
+      }
     } finally {
-      if (!signal?.aborted) setLoading(false);
+      if (!signal?.aborted && loadRequestRef.current === requestId) setLoading(false);
     }
   }
 
   useEffect(() => {
     const controller = new AbortController();
     void loadSettings(controller.signal);
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      loadRequestRef.current += 1;
+    };
   }, [reloadKey, token]);
 
   async function toggleEnabled() {
@@ -72,15 +80,15 @@ export function TurnstileSettingsCard({
   }
 
   return (
-    <article className="source-public-card turnstile-settings-card" {...getAdminLoadingProps(loading, showSkeleton)}>
-      {!loading && loadError ? (
-        <div className="settings-card-error" role="alert">
-          <h3>{maintenanceText.turnstileTitle}</h3>
-          <p>{loadError}</p>
-          <button className="ghost-button" type="button" onClick={() => void loadSettings()}>
-            {maintenanceText.systemRetry}
-          </button>
-        </div>
+    <article className="source-public-card turnstile-settings-card" {...getAdminLoadingProps(loading && !loadError, showSkeleton)}>
+      {loadError ? (
+        <AdminSettingsLoadError
+          isRetrying={loading}
+          message={getLocalizedErrorMessage(loadError, t)}
+          onRetry={() => void loadSettings()}
+          retryLabel={maintenanceText.systemRetry}
+          title={maintenanceText.turnstileTitle}
+        />
       ) : (
         <div className="source-card-heading">
           <h3>{maintenanceText.turnstileTitle}</h3>
@@ -107,7 +115,7 @@ export function TurnstileSettingsCard({
           </div>
         </div>
       )}
-      <AdminSkeletonLines loading={loading} visible={showSkeleton} />
+      <AdminSkeletonLines loading={loading && !loadError} visible={showSkeleton} />
     </article>
   );
 }

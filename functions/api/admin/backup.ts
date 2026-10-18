@@ -13,6 +13,8 @@ import {
   type ToolRow
 } from "../../_shared";
 import type { TelegramMessageRow } from "../../_telegram";
+import { CATEGORY_ICONS_KEY, CategoryIconCapacityError, parseCategoryIconSettings } from "../../_category-icons";
+import { MAX_CATEGORY_ICON_SETTINGS_BYTES } from "../../../src/category-icon-settings";
 
 type AppSettingRow = {
   key: string;
@@ -52,6 +54,7 @@ const SAFE_SETTING_KEYS = [
   "rsshub_settings",
   "site_settings",
   "admin_category_settings",
+  CATEGORY_ICONS_KEY,
   "telegram_settings"
 ] as const;
 const SAFE_SETTING_PLACEHOLDERS = SAFE_SETTING_KEYS.map(() => "?").join(", ");
@@ -99,6 +102,9 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   try {
     data = normalizeBackupPayload(await readLimitedJsonBody(request));
   } catch (error) {
+    if (error instanceof CategoryIconCapacityError) {
+      return jsonError(error.message, "CATEGORY_ICONS_CAPACITY", { status: 400 });
+    }
     if (error instanceof BackupDataError) {
       return jsonError(error.message, "BACKUP_DATA_INVALID", { status: 400 }, {
         resource: error.resource,
@@ -233,7 +239,9 @@ async function readBackupData(db: D1Database): Promise<BackupData> {
     contentSources: contentSources.results,
     contentItems: contentItems.results,
     telegramMessages: telegramMessages.results,
-    settings: settings.results
+    settings: settings.results.map((row) => row.key === CATEGORY_ICONS_KEY
+      ? { ...row, value: JSON.stringify(parseCategoryIconSettings(row.value)) }
+      : row)
   };
 }
 
@@ -733,9 +741,16 @@ function normalizeSettingRow(
     return null;
   }
 
+  const settingValue = key === CATEGORY_ICONS_KEY
+    ? JSON.stringify(parseCategoryIconSettings(readString(row.value)))
+    : readString(row.value);
+  if (key === CATEGORY_ICONS_KEY && new TextEncoder().encode(settingValue).byteLength > MAX_CATEGORY_ICON_SETTINGS_BYTES) {
+    throw new CategoryIconCapacityError();
+  }
+
   return {
     key,
-    value: readString(row.value),
+    value: settingValue,
     updated_at: readString(row.updated_at) || now
   };
 }

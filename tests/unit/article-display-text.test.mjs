@@ -13,7 +13,7 @@ const compiledArticleHelpers = await compileTypescriptModule(
       "lucide-react": stub(
         `export const BadgeCheck=1,BarChart3=1,Boxes=1,BrainCircuit=1,Code2=1,` +
           `Database=1,FileImage=1,FileText=1,Globe2=1,LayoutDashboard=1,Link2=1,` +
-          `Mail=1,PackagePlus=1,Server=1,Sparkles=1,Star=1,Tags=1;`
+          `Mail=1,PackagePlus=1,Rss=1,Server=1,Sparkles=1,Star=1,Tags=1,Wrench=1;`
       ),
       "./admin-field-examples": stub(
         `export const ADMIN_RESOURCE_FIELD_EXAMPLES = { zh: {}, en: {} };`

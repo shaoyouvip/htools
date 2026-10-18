@@ -1,9 +1,9 @@
 import { ArrowUpRight, Check, ChevronDown, ChevronUp, Copy } from "lucide-react";
 import type { Nodes as HtmlNodes, Root as HtmlRoot } from "hast";
 import type { Nodes } from "mdast";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { HTMLAttributes, ImgHTMLAttributes } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
@@ -12,8 +12,9 @@ import remarkParse from "remark-parse";
 import { unified, type PluggableList } from "unified";
 import { getArticleDisplaySummary } from "../article-helpers";
 import { DEFAULT_PROXY_MODE, DEFAULT_PROXY_SCOPE, proxifyUrl } from "../proxy";
+import { useToast } from "../toast-context";
 import type { ProxySettings } from "../types";
-import type { Locale } from "../i18n";
+import { translations, type Locale } from "../i18n";
 
 const markdownSanitizeSchema = {
   ...defaultSchema,
@@ -132,6 +133,71 @@ export default function MarkdownContent({
     () => prepareMarkdownContent(content),
     [content]
   );
+  // 保持正文组件身份，避免全局提示更新时丢失展开状态、焦点和选区。
+  const components = useMemo<Components>(() => ({
+    a({ href, children, ...props }) {
+      const safeHref = sanitizeMarkdownHref(href);
+
+      if (!safeHref || isSearchTagHref(safeHref)) {
+        return <>{children}</>;
+      }
+
+      const isLocalAnchor = safeHref.startsWith("#");
+
+      return (
+        <a
+          {...props}
+          href={isLocalAnchor ? safeHref : proxifyUrl(safeHref, proxySettings)}
+          rel={isLocalAnchor ? undefined : "noreferrer"}
+          target={isLocalAnchor ? undefined : "_blank"}
+        >
+          {children}
+        </a>
+      );
+    },
+    img({ alt, src, title, node: _node, ...props }) {
+      return (
+        <MarkdownImage
+          {...props}
+          alt={alt ?? ""}
+          proxySettings={proxySettings}
+          src={src}
+          title={title}
+        />
+      );
+    },
+    table({ children, node: _node, ...props }) {
+      return (
+        <div className="markdown-table-wrap">
+          <table {...props}>{children}</table>
+        </div>
+      );
+    },
+    pre({ children }) {
+      return <>{children}</>;
+    },
+    code({ className, children, node: _node, ...props }) {
+      const code = String(children).replace(/\n$/, "");
+      const isBlock = Boolean(className) || code.includes("\n");
+
+      if (!isBlock) {
+        return (
+          <code className={className} {...props}>
+            {children}
+          </code>
+        );
+      }
+
+      return (
+        <MarkdownCodeBlock
+          className={className}
+          code={code}
+          codeProps={props}
+          locale={locale}
+        />
+      );
+    }
+  }), [locale, proxySettings]);
 
   return (
     <div className="markdown-content">
@@ -139,70 +205,7 @@ export default function MarkdownContent({
         <ReactMarkdown
           remarkPlugins={markdownRemarkPlugins}
           rehypePlugins={markdownRehypePlugins}
-          components={{
-            a({ href, children, ...props }) {
-              const safeHref = sanitizeMarkdownHref(href);
-
-              if (!safeHref || isSearchTagHref(safeHref)) {
-                return <>{children}</>;
-              }
-
-              const isLocalAnchor = safeHref.startsWith("#");
-
-              return (
-                <a
-                  {...props}
-                  href={isLocalAnchor ? safeHref : proxifyUrl(safeHref, proxySettings)}
-                  rel={isLocalAnchor ? undefined : "noreferrer"}
-                  target={isLocalAnchor ? undefined : "_blank"}
-                >
-                  {children}
-                </a>
-              );
-            },
-            img({ alt, src, title, node: _node, ...props }) {
-              return (
-                <MarkdownImage
-                  {...props}
-                  alt={alt ?? ""}
-                  proxySettings={proxySettings}
-                  src={src}
-                  title={title}
-                />
-              );
-            },
-            table({ children, node: _node, ...props }) {
-              return (
-                <div className="markdown-table-wrap">
-                  <table {...props}>{children}</table>
-                </div>
-              );
-            },
-            pre({ children }) {
-              return <>{children}</>;
-            },
-            code({ className, children, node: _node, ...props }) {
-              const code = String(children).replace(/\n$/, "");
-              const isBlock = Boolean(className) || code.includes("\n");
-
-              if (!isBlock) {
-                return (
-                  <code className={className} {...props}>
-                    {children}
-                  </code>
-                );
-              }
-
-              return (
-                <MarkdownCodeBlock
-                  className={className}
-                  code={code}
-                  codeProps={props}
-                  locale={locale}
-                />
-              );
-            }
-          }}
+          components={components}
         >
           {body}
         </ReactMarkdown>
@@ -261,12 +264,15 @@ function MarkdownCodeBlock({
   const shouldCollapse = lines.length > collapsibleCodeLineThreshold;
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
+  const copyRequestRef = useRef(0);
+  const notify = useToast();
   const labels = getMarkdownCodeBlockLabels(locale);
   const languageLabel = getCodeLanguageLabel(className, code);
 
   useEffect(() => {
     setExpanded(false);
     setCopied(false);
+    return () => { copyRequestRef.current += 1; };
   }, [code]);
 
   useEffect(() => {
@@ -280,11 +286,15 @@ function MarkdownCodeBlock({
   }, [copied]);
 
   async function handleCopy() {
+    const requestId = ++copyRequestRef.current;
+    setCopied(false);
     try {
       await copyTextToClipboard(code);
+      if (requestId !== copyRequestRef.current) return;
       setCopied(true);
     } catch {
-      setCopied(false);
+      if (requestId !== copyRequestRef.current) return;
+      notify?.({ tone: "error", message: labels.copyFailed });
     }
   }
 
@@ -353,6 +363,7 @@ function getMarkdownCodeBlockLabels(locale?: Locale) {
         copy: (languageLabel: string) =>
           languageLabel ? `复制 ${languageLabel}` : "复制代码",
         copied: "已复制",
+        copyFailed: translations.zh.markdownCode.copyFailed,
         lineCount: (count: number) => `${count} 行`
       }
     : {
@@ -361,6 +372,7 @@ function getMarkdownCodeBlockLabels(locale?: Locale) {
         copy: (languageLabel: string) =>
           languageLabel ? `Copy ${languageLabel}` : "Copy code",
         copied: "Copied",
+        copyFailed: translations.en.markdownCode.copyFailed,
         lineCount: (count: number) => `${count} lines`
       };
 }
@@ -400,19 +412,41 @@ async function copyTextToClipboard(value: string) {
     return;
   }
 
+  const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const inputSelection = activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement
+    ? { start: activeElement.selectionStart, end: activeElement.selectionEnd, direction: activeElement.selectionDirection }
+    : null;
+  const selection = document.getSelection();
+  const ranges = selection
+    ? Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index).cloneRange())
+    : [];
   const textarea = document.createElement("textarea");
   textarea.value = value;
   textarea.setAttribute("readonly", "");
   textarea.style.position = "fixed";
   textarea.style.left = "-9999px";
   textarea.style.top = "0";
-  document.body.appendChild(textarea);
-  textarea.select();
 
   try {
-    document.execCommand("copy");
+    document.body.appendChild(textarea);
+    textarea.focus({ preventScroll: true });
+    textarea.select();
+    if (!document.execCommand("copy")) {
+      throw new Error("Copy failed");
+    }
   } finally {
-    document.body.removeChild(textarea);
+    textarea.remove();
+    activeElement?.focus({ preventScroll: true });
+    if (selection) {
+      selection.removeAllRanges();
+      ranges.forEach((range) => selection.addRange(range));
+    }
+    if (
+      inputSelection && inputSelection.start !== null && inputSelection.end !== null &&
+      (activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement)
+    ) {
+      activeElement.setSelectionRange(inputSelection.start, inputSelection.end, inputSelection.direction ?? undefined);
+    }
   }
 }
 

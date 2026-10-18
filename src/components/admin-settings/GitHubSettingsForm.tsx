@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { loadGitHubSettings, saveGitHubSettings } from "../../admin-api";
 import { getLocalizedErrorMessage } from "../../site-helpers";
+import { AdminSettingsLoadError } from "../AdminPanelStates";
 import { useLoadingSkeleton } from "../../useLoadingSkeleton";
 import { AdminSkeletonLines, getAdminLoadingProps } from "../admin-skeletons";
 import { SettingsStatusBadge } from "./SettingsStatusBadge";
@@ -33,7 +34,7 @@ export function GitHubSettingsForm({
   const [isSaving, setIsSaving] = useState(false);
   const writeInProgressRef = useRef(false);
   const [isLoadingSettings, setIsLoadingSettings] = useState(true);
-  const [settingsError, setSettingsError] = useState("");
+  const [settingsError, setSettingsError] = useState<unknown>(null);
   const [settingsReloadKey, setSettingsReloadKey] = useState(0);
   const settingsLoadRequestRef = useRef(0);
   const settingsLoadAbortRef = useRef<AbortController | null>(null);
@@ -72,7 +73,6 @@ export function GitHubSettingsForm({
 
     async function loadSettings() {
       setIsLoadingSettings(true);
-      setSettingsError("");
 
       try {
         const loaded = await loadGitHubSettings(token, {
@@ -81,6 +81,7 @@ export function GitHubSettingsForm({
 
         if (settingsLoadRequestRef.current !== requestId) return;
         setSettings(loaded);
+        setSettingsError(null);
 
         if (appliedReloadKeyRef.current !== reloadKey || !isDirtyRef.current) {
           setForm({
@@ -96,7 +97,7 @@ export function GitHubSettingsForm({
           settingsLoadRequestRef.current === requestId &&
           !controller.signal.aborted
         ) {
-          setSettingsError(getLocalizedErrorMessage(error, t));
+          setSettingsError(error);
         }
       } finally {
         if (settingsLoadRequestRef.current === requestId) {
@@ -116,7 +117,7 @@ export function GitHubSettingsForm({
         settingsLoadRequestRef.current += 1;
       }
     };
-  }, [reloadKey, settingsReloadKey, t, token]);
+  }, [reloadKey, settingsReloadKey, token]);
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -184,17 +185,19 @@ export function GitHubSettingsForm({
     }
   }
 
-  if (!isLoadingSettings && settingsError) {
+  if (settingsError) {
     return (
-      <div className="settings-card-error" role="alert">
-        <h3>{maintenanceText.githubSubmissionTitle}</h3>
-        <p>{settingsError}</p>
-        <button className="ghost-button" type="button"
-          onClick={() => setSettingsReloadKey((current) => current + 1)}
-        >
-          {maintenanceText.systemRetry}
-        </button>
-      </div>
+      <AdminSettingsLoadError
+        isRetrying={isLoadingSettings}
+        message={getLocalizedErrorMessage(settingsError, t)}
+        onRetry={() => {
+          if (isLoadingSettings || settingsLoadAbortRef.current) return;
+          setIsLoadingSettings(true);
+          setSettingsReloadKey((current) => current + 1);
+        }}
+        retryLabel={maintenanceText.systemRetry}
+        title={maintenanceText.githubSubmissionTitle}
+      />
     );
   }
 

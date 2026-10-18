@@ -12,6 +12,7 @@ import {
   type Env
 } from "../../_shared";
 import { deleteTelegramPushCategory } from "../../_telegram";
+import { getCategoryIconSettings, removeCategoryIcon } from "../../_category-icons";
 
 const ADMIN_CATEGORY_SCOPES = ["tools", "articles", "push", "content"] as const;
 const ADMIN_ALL_CATEGORY = "All";
@@ -29,8 +30,11 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   }
 
   try {
+    const [settings, icons] = await Promise.all([
+      getAdminCategorySettings(env), getCategoryIconSettings(env)
+    ]);
     return json({
-      settings: await getAdminCategorySettings(env)
+      settings, icons
     });
   } catch (error) {
     const message =
@@ -101,9 +105,11 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       category,
       action === "migrate" ? targetCategory : ""
     );
+    await removeCategoryIcon(env, scope, category);
+    const icons = await getCategoryIconSettings(env);
     await invalidatePublicApiCache(env);
 
-    return json({ affected, settings });
+    return json({ affected, settings, icons });
   } catch (error) {
     return writeErrorResponse(error, "Unable to update category.");
   }

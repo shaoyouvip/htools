@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLoadingSkeleton } from "../../useLoadingSkeleton";
 import { saveTelegramSettings, testTelegramSettings } from "../../admin-api";
 import { getLocalizedErrorMessage } from "../../site-helpers";
+import { AdminSettingsLoadError } from "../AdminPanelStates";
 import {
   AdminSkeletonLines,
   getAdminLoadingProps
@@ -14,6 +15,7 @@ import type { TelegramConnection, TelegramSettings } from "../../types";
 export function TelegramSettingsCard({
   locale,
   maintenanceText,
+  onDirtyChange,
   onReload,
   onSettingsChange,
   setStatus,
@@ -25,6 +27,7 @@ export function TelegramSettingsCard({
 }: {
   locale: Locale;
   maintenanceText: ReturnType<typeof getAdminMaintenanceText>;
+  onDirtyChange: (dirty: boolean) => void;
   onReload: () => Promise<void>;
   onSettingsChange: (settings: TelegramSettings) => void;
   setStatus: (status: string) => void;
@@ -34,8 +37,8 @@ export function TelegramSettingsCard({
   t: Messages;
   token: string;
 }) {
-  const [footerMarkdown, setFooterMarkdown] = useState("");
-  const [target, setTarget] = useState("");
+  const [footerMarkdown, setFooterMarkdown] = useState(settings.footerMarkdown);
+  const [target, setTarget] = useState(settings.target);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [connection, setConnection] = useState<TelegramConnection | null>(null);
@@ -54,6 +57,17 @@ export function TelegramSettingsCard({
     setFooterMarkdown(preservedDraft?.footerMarkdown ?? settings.footerMarkdown);
     setConnection(null);
   }, [settings]);
+
+  useEffect(() => {
+    onDirtyChange(dirty);
+  }, [dirty, onDirtyChange]);
+
+  useEffect(
+    () => () => {
+      onDirtyChange(false);
+    },
+    [onDirtyChange]
+  );
 
   async function persist(
     next: { enabled: boolean; target: string; footerMarkdown: string },
@@ -113,16 +127,16 @@ export function TelegramSettingsCard({
     }
   }
 
-  if (!loading && error) {
+  if (error) {
     return (
       <article className="source-public-card telegram-settings-card">
-        <div className="settings-card-error" role="alert">
-          <h3>{maintenanceText.telegramTitle}</h3>
-          <p>{error}</p>
-          <button className="ghost-button" type="button" onClick={() => void onReload()}>
-            {maintenanceText.systemRetry}
-          </button>
-        </div>
+        <AdminSettingsLoadError
+          isRetrying={loading}
+          message={error}
+          onRetry={() => void onReload()}
+          retryLabel={maintenanceText.systemRetry}
+          title={maintenanceText.telegramTitle}
+        />
       </article>
     );
   }

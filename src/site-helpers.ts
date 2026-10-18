@@ -1,6 +1,7 @@
 import { isChineseLocaleText } from "./article-helpers";
 import { translations, type Locale, type Messages } from "./i18n";
 import { getDefaultLegalMarkdown, type LegalPageKind } from "./legal-content";
+import { SITE_LOGO_FALLBACK_DATA_URL } from "./site-logo-fallback";
 import type {
   FooterLink,
   FooterLinkGroup,
@@ -12,6 +13,8 @@ import type {
   SiteSettings
 } from "./types";
 
+export const DEFAULT_SITE_ICON_URL = "/htools-logo.png";
+
 const DEFAULT_FAVICON_LINKS: {
   key: string;
   href: string;
@@ -20,8 +23,9 @@ const DEFAULT_FAVICON_LINKS: {
 }[] = [
   {
     key: "ico",
-    href: "/favicon.ico",
-    sizes: "any"
+    href: DEFAULT_SITE_ICON_URL,
+    sizes: "512x512",
+    type: "image/png"
   }
 ];
 
@@ -814,6 +818,26 @@ export function formatFooterJson(value: unknown) {
   return JSON.stringify(value, null, 2);
 }
 
+export function isSiteIconDataUrl(value: string) {
+  return /^data:image\/(?:png|jpe?g|webp|gif|x-icon|vnd\.microsoft\.icon);base64,/i.test(
+    value.trim()
+  );
+}
+
+export function addSiteIconRetryParam(value: string, retryToken: number) {
+  if (!retryToken || isSiteIconDataUrl(value)) {
+    return value;
+  }
+
+  try {
+    const url = new URL(value);
+    url.searchParams.set("htools_icon_retry", String(retryToken));
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
 function ensureFaviconLink(key: string) {
   const selector = `link[data-htools-favicon="${key}"]`;
   const existingLink = document.head.querySelector<HTMLLinkElement>(selector);
@@ -830,9 +854,7 @@ function ensureFaviconLink(key: string) {
   return link;
 }
 
-export function syncSiteFavicon(iconUrl: string) {
-  const customIconUrl = iconUrl.trim();
-
+function updateFaviconLinks(customIconUrl: string) {
   DEFAULT_FAVICON_LINKS.forEach((favicon) => {
     const link = ensureFaviconLink(favicon.key);
     link.rel = "icon";
@@ -858,6 +880,47 @@ export function syncSiteFavicon(iconUrl: string) {
       link.removeAttribute("type");
     }
   });
+}
+
+export function syncSiteFavicon(iconUrl: string) {
+  const customIconUrl = iconUrl.trim();
+  updateFaviconLinks(customIconUrl);
+  const firstSource = customIconUrl || DEFAULT_SITE_ICON_URL;
+  const retrySource = addSiteIconRetryParam(firstSource, Date.now());
+  const sources = [...new Set([firstSource, retrySource, DEFAULT_SITE_ICON_URL])];
+  let image: HTMLImageElement | undefined;
+  let active = true;
+
+  function loadSource(index: number) {
+    const source = sources[index];
+    if (!source) {
+      updateFaviconLinks(SITE_LOGO_FALLBACK_DATA_URL);
+      return;
+    }
+
+    const attempt = new Image();
+    image = attempt;
+    attempt.onload = () => {
+      if (!active || image !== attempt) return;
+      attempt.onload = attempt.onerror = null;
+      image = undefined;
+      updateFaviconLinks(source === DEFAULT_SITE_ICON_URL ? "" : source);
+    };
+    attempt.onerror = () => {
+      if (!active || image !== attempt) return;
+      attempt.onload = attempt.onerror = null;
+      image = undefined;
+      loadSource(index + 1);
+    };
+    attempt.src = source;
+  }
+
+  loadSource(0);
+
+  return () => {
+    active = false;
+    if (image) image.onload = image.onerror = null;
+  };
 }
 
 function getSiteIconFileType(file: File) {
@@ -944,6 +1007,9 @@ export function getLocalizedErrorMessage(
   }
 
   const businessCodeMessages: Record<string, string> = {
+    CATEGORY_ICONS_CAPACITY: isChinese
+      ? "分类图标容量已满，请恢复部分图标为默认，或简化 SVG 代码。"
+      : "Category icon capacity is full. Restore some icons to default or simplify the SVG code.",
     INVALID_PASSWORD: isChinese ? "密码不正确。" : "Incorrect password.",
     TURNSTILE_CONFIG_ERROR: isChinese
       ? "Cloudflare Turnstile 配置不完整，请联系站点管理员。"
@@ -1067,9 +1133,7 @@ export function getLocalizedErrorMessage(
     normalized.includes("networkerror") ||
     normalized.includes("load failed")
   ) {
-    return isChinese
-      ? "网络请求失败，请检查本地预览服务或网络连接。"
-      : "Network request failed. Check the local preview server or network connection.";
+    return t.errors.networkError;
   }
 
   if (message === "Request failed") {

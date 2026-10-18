@@ -12,10 +12,12 @@ import {
   Link2,
   Mail,
   PackagePlus,
+  Rss,
   Server,
   Sparkles,
   Star,
-  Tags
+  Tags,
+  Wrench
 } from "lucide-react";
 import { ADMIN_RESOURCE_FIELD_EXAMPLES } from "./admin-field-examples";
 import { translations, type Locale, type Messages } from "./i18n";
@@ -25,6 +27,9 @@ import { ADMIN_FEATURED_CATEGORY } from "./admin-helpers";
 const categoryIcons = {
   All: Boxes,
   [ADMIN_FEATURED_CATEGORY]: Star,
+  __telegram_tool__: Wrench,
+  __telegram_article__: FileText,
+  __telegram_content__: Rss,
   Backend: Server,
   Database,
   "Web Framework": Code2,
@@ -193,7 +198,9 @@ export function getArticleText(locale: Locale) {
 
 
 export function getCategoryIcon(category: string) {
-  return categoryIcons[category as keyof typeof categoryIcons] ?? Tags;
+  return Object.hasOwn(categoryIcons, category)
+    ? categoryIcons[category as keyof typeof categoryIcons]
+    : Tags;
 }
 
 

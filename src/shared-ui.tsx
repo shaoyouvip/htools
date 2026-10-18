@@ -1,4 +1,4 @@
-import { ArrowUpRight, Wand2 } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import {
   type ButtonHTMLAttributes,
   type MouseEventHandler,
@@ -11,7 +11,14 @@ import {
   useState
 } from "react";
 import type { SiteSettings } from "./types";
-import { getSiteDisplayName, getSiteSubtitle } from "./site-helpers";
+import {
+  DEFAULT_SITE_ICON_URL,
+  addSiteIconRetryParam,
+  getSiteDisplayName,
+  getSiteSubtitle,
+  isSiteIconDataUrl
+} from "./site-helpers";
+import { SITE_LOGO_FALLBACK_DATA_URL } from "./site-logo-fallback";
 import { getEffectiveTags } from "../shared/effective-tags";
 
 export const SiteSettingsContext = createContext<SiteSettings | undefined>(undefined);
@@ -76,74 +83,69 @@ export function PublicGlowAction({
   );
 }
 
-export function isSiteIconDataUrl(value: string) {
-  return /^data:image\/(?:png|jpe?g|webp|gif|x-icon|vnd\.microsoft\.icon);base64,/i.test(
-    value.trim()
-  );
-}
-
-export function addSiteIconRetryParam(value: string, retryToken: number) {
-  if (!retryToken || isSiteIconDataUrl(value)) {
-    return value;
-  }
-
-  try {
-    const url = new URL(value);
-    url.searchParams.set("htools_icon_retry", String(retryToken));
-    return url.toString();
-  } catch {
-    return value;
-  }
-}
-
 export function SiteBrandMark({
   className = "",
-  iconSize = 25,
-  strokeWidth = 2.2
+  iconUrl: previewIconUrl
 }: {
   className?: string;
-  iconSize?: number;
-  strokeWidth?: number;
+  iconUrl?: string;
 }) {
   const settings = useSiteSettings();
-  const iconUrl = settings.iconUrl.trim();
-  const [imageFailed, setImageFailed] = useState(false);
+  const iconUrl = (previewIconUrl ?? settings.iconUrl).trim();
+
+  // 按图片源重建状态，避免快速触发的加载失败被后续 effect 重置。
+  return (
+    <SiteBrandImage
+      key={iconUrl}
+      className={className}
+      iconUrl={iconUrl}
+    />
+  );
+}
+
+function SiteBrandImage({
+  className,
+  iconUrl
+}: {
+  className: string;
+  iconUrl: string;
+}) {
+  const [useEmbeddedIcon, setUseEmbeddedIcon] = useState(false);
+  const [useDefaultIcon, setUseDefaultIcon] = useState(false);
   const [retryToken, setRetryToken] = useState(0);
+  const displayIconUrl = useDefaultIcon ? DEFAULT_SITE_ICON_URL : iconUrl || DEFAULT_SITE_ICON_URL;
   const iconSrc = useMemo(
-    () => addSiteIconRetryParam(iconUrl, retryToken),
-    [iconUrl, retryToken]
+    () => useEmbeddedIcon ? SITE_LOGO_FALLBACK_DATA_URL : addSiteIconRetryParam(displayIconUrl, retryToken),
+    [displayIconUrl, retryToken, useEmbeddedIcon]
   );
 
-  useEffect(() => {
-    setImageFailed(false);
-    setRetryToken(0);
-  }, [iconUrl]);
-
   function handleImageError() {
-    if (!retryToken && !isSiteIconDataUrl(iconUrl)) {
-      setRetryToken(Date.now());
+    if (displayIconUrl === DEFAULT_SITE_ICON_URL) {
+      setUseEmbeddedIcon(true);
       return;
     }
 
-    setImageFailed(true);
+    if (!retryToken && !isSiteIconDataUrl(iconUrl)) {
+      const nextRetryToken = Date.now();
+      if (addSiteIconRetryParam(iconUrl, nextRetryToken) !== iconUrl) {
+        setRetryToken(nextRetryToken);
+        return;
+      }
+    }
+
+    setUseDefaultIcon(true);
+    setRetryToken(0);
   }
 
   return (
-    <span
-      className={`brand-mark ${className} ${
-        iconUrl && !imageFailed ? "has-site-icon" : ""
-      }`.trim()}
-    >
-      {iconUrl && !imageFailed ? (
-        <img
-          className="site-brand-icon"
-          src={iconSrc}
-          alt=""
-          onError={handleImageError}
-        />
-      ) : (
-        <Wand2 size={iconSize} strokeWidth={strokeWidth} />
-      )}
+    <span className={`brand-mark ${className} has-site-icon`.trim()}>
+      <img
+        key={iconSrc}
+        className="site-brand-icon"
+        src={iconSrc}
+        alt=""
+        onError={useEmbeddedIcon ? undefined : handleImageError}
+      />
     </span>
   );
 }

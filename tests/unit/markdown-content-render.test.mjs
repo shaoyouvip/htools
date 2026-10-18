@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { after, test } from "node:test";
-import { createElement } from "react";
+import { createElement, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { compileTypescriptModule } from "../helpers/compile-typescript.mjs";
@@ -18,6 +18,16 @@ const articleHelpers = await compileTypescriptModule(new URL("../../src/article-
   }
 });
 after(() => articleHelpers.cleanup());
+const locales = await Promise.all(["zh", "en"].map((locale) => compileTypescriptModule(
+  new URL(`../../src/i18n/${locale}.ts`, import.meta.url),
+  { importReplacements: { "../admin-field-examples": stub("export const ADMIN_RESOURCE_FIELD_EXAMPLES = { zh: {}, en: {} };") } }
+)));
+after(() => Promise.all(locales.map((locale) => locale.cleanup())));
+const i18n = stub(`import { zh } from "${locales[0].url.href}"; import { en } from "${locales[1].url.href}"; export const translations = { zh, en };`);
+const toastContext = await compileTypescriptModule(new URL("../../src/toast-context.ts", import.meta.url), {
+  importReplacements: { react: import.meta.resolve("react") }
+});
+after(() => toastContext.cleanup());
 const source = await readFile(new URL("../../src/components/MarkdownContent.tsx", import.meta.url), "utf8");
 let compiled = ts.transpileModule(source, {
   fileName: "MarkdownContent.tsx",
@@ -28,9 +38,173 @@ for (const specifier of ["react", "react/jsx-runtime", "lucide-react", "react-ma
 }
 compiled = compiled.replaceAll('from "../proxy"', `from "${proxy.url.href}"`);
 compiled = compiled.replaceAll('from "../article-helpers"', `from "${articleHelpers.url.href}"`);
-const { default: MarkdownContent, ArticleSummary } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
+compiled = compiled.replaceAll('from "../i18n"', `from "${i18n}"`);
+compiled = compiled.replaceAll('from "../toast-context"', `from "${toastContext.url.href}"`);
+compiled += "\nexport { copyTextToClipboard, getMarkdownCodeBlockLabels };";
+const { default: MarkdownContent, ArticleSummary, copyTextToClipboard, getMarkdownCodeBlockLabels } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
 const render = (content) => renderToStaticMarkup(createElement(MarkdownContent, { content, locale: "zh" }));
 const renderSummary = (summary, content) => renderToStaticMarkup(createElement(ArticleSummary, { summary, content }));
+
+test("正文重渲染保留组件身份，内容、语言和代理变更仍更新实际输出", () => {
+  const proxySettings = { enabled: false, baseUrl: "", mode: "prefix", scope: "all" };
+  const content = "```js\nconst marker = 1;\n```\n\n[文档](https://example.test/docs)\n\n![示例](https://example.test/image.png)";
+  const changedContent = content.replace("marker = 1", "marker = 2");
+  const inputs = [
+    { content, locale: "zh", proxySettings },
+    { content, locale: "zh", proxySettings },
+    { content: changedContent, locale: "zh", proxySettings },
+    { content: changedContent, locale: "en", proxySettings },
+    { content: changedContent, locale: "en", proxySettings: { ...proxySettings, enabled: true, baseUrl: "https://proxy.test/" } }
+  ];
+  const renders = [];
+  function RerenderProbe() {
+    const [index, setIndex] = useState(0);
+    // 在同一次 React 渲染中依序换入真实 props，保留被测组件的 Hook 状态。
+    const output = MarkdownContent(inputs[index]);
+    renders.push({ output, components: output.props.children[0].props.components });
+    if (index < inputs.length - 1) setIndex(index + 1);
+    return output;
+  }
+  renderToStaticMarkup(createElement(RerenderProbe));
+  assert.equal(renders.length, inputs.length);
+  assert.equal(renders[0].components, renders[1].components, "普通重渲染不能重建代码块");
+  assert.equal(renders[1].components, renders[2].components, "修改正文应通过 props 更新既有组件");
+  const html = renders.map(({ output }) => renderToStaticMarkup(output));
+  assert.match(html[0], /const marker = 1;/);
+  assert.match(html[2], /const marker = 2;/);
+  assert.doesNotMatch(html[2], /const marker = 1;/);
+  assert.match(html[2], /复制 JS/);
+  assert.match(html[3], /Copy JS/);
+  assert.match(html[3], /href="https:\/\/example\.test\/docs"/);
+  assert.match(html[4], /href="https:\/\/proxy\.test\/https:\/\/example\.test\/docs"/);
+  assert.match(html[4], /src="https:\/\/proxy\.test\/https:\/\/example\.test\/image\.png"/);
+});
+
+async function withClipboardEnvironment({ writeText, command = () => true, input = false, emptySelection = false }, run) {
+  const state = { nodes: [], commands: [], focused: null, copiedValue: null };
+  const originalRange = { text: "原有正文选区", cloneRange() { return { ...this }; } };
+  const selection = {
+    ranges: [originalRange],
+    get rangeCount() { return this.ranges.length; },
+    getRangeAt(index) { return this.ranges[index]; },
+    removeAllRanges() { this.ranges = []; },
+    addRange(range) { this.ranges.push(range); }
+  };
+  class Element {
+    focus(options) { state.focused = this; this.focusOptions = options; }
+  }
+  class Input extends Element {
+    selectionStart = 2;
+    selectionEnd = 6;
+    selectionDirection = "backward";
+    setSelectionRange(start, end, direction) {
+      this.selectionStart = start;
+      this.selectionEnd = end;
+      this.selectionDirection = direction;
+    }
+  }
+  class Textarea extends Input {
+    style = {};
+    setAttribute() {}
+    select() { selection.removeAllRanges(); }
+    remove() { state.nodes = state.nodes.filter((node) => node !== this); }
+  }
+  state.activeElement = input ? new Input() : new Element();
+  const browserGlobals = {
+    navigator: { clipboard: writeText ? { writeText } : undefined },
+    HTMLElement: Element,
+    HTMLInputElement: Input,
+    HTMLTextAreaElement: Textarea,
+    document: {
+      activeElement: emptySelection ? null : state.activeElement,
+      getSelection: () => emptySelection ? null : selection,
+      createElement: () => new Textarea(),
+      body: { appendChild(node) { state.nodes.push(node); } },
+      execCommand(name) {
+        state.commands.push(name);
+        state.copiedValue = state.nodes[0]?.value;
+        if (input) state.activeElement.setSelectionRange(0, 0, "none");
+        return command();
+      }
+    }
+  };
+  const previous = new Map(Object.keys(browserGlobals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(browserGlobals)) {
+    Object.defineProperty(globalThis, key, { configurable: true, value });
+  }
+  try {
+    await run(state, selection);
+  } finally {
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+  }
+}
+
+test("代码复制仅在 Clipboard API 成功后完成，保留完整代码原文", async () => {
+  const value = "const 示例 = '<tag>';\nconsole.log(示例);";
+  const writes = [];
+  await withClipboardEnvironment({ writeText: async (text) => { writes.push(text); } }, async (state) => {
+    await copyTextToClipboard(value);
+    assert.deepEqual(writes, [value]);
+    assert.deepEqual(state.commands, []);
+    assert.deepEqual(state.nodes, []);
+  });
+});
+
+test("复制权限被拒时返回失败，不改用兼容接口误报成功", async () => {
+  const denied = new Error("Permission denied");
+  await withClipboardEnvironment({ writeText: async () => { throw denied; } }, async (state) => {
+    await assert.rejects(copyTextToClipboard("code"), (error) => error === denied);
+    assert.deepEqual(state.commands, []);
+    assert.deepEqual(state.nodes, []);
+  });
+});
+
+for (const [name, command, failure] of [
+  ["成功", () => true, null],
+  ["返回 false", () => false, /Copy failed/],
+  ["抛出异常", () => { throw new Error("Copy unavailable"); }, /Copy unavailable/]
+]) {
+  test(`兼容复制${name}均清理临时节点并恢复原焦点和正文选区`, async () => {
+    await withClipboardEnvironment({ command }, async (state, selection) => {
+      if (failure) await assert.rejects(copyTextToClipboard("完整\n代码"), failure);
+      else await copyTextToClipboard("完整\n代码");
+      assert.equal(state.copiedValue, "完整\n代码");
+      assert.deepEqual(state.commands, ["copy"]);
+      assert.deepEqual(state.nodes, []);
+      assert.equal(state.focused, state.activeElement);
+      assert.deepEqual(state.activeElement.focusOptions, { preventScroll: true });
+      assert.equal(selection.rangeCount, 1);
+      assert.equal(selection.getRangeAt(0).text, "原有正文选区");
+    });
+  });
+}
+
+test("兼容复制失败仍恢复输入框原选区和选择方向", async () => {
+  await withClipboardEnvironment({ command: () => false, input: true }, async (state) => {
+    await assert.rejects(copyTextToClipboard("code"), /Copy failed/);
+    assert.deepEqual([
+      state.activeElement.selectionStart,
+      state.activeElement.selectionEnd,
+      state.activeElement.selectionDirection
+    ], [2, 6, "backward"]);
+    assert.deepEqual(state.nodes, []);
+  });
+});
+
+test("兼容复制无原选区或焦点时仍可完成并清理", async () => {
+  await withClipboardEnvironment({ emptySelection: true }, async (state) => {
+    await copyTextToClipboard("code");
+    assert.deepEqual(state.nodes, []);
+  });
+});
+
+test("代码复制失败提示按显式语言使用中英文公共文案", () => {
+  assert.equal(getMarkdownCodeBlockLabels("zh").copyFailed, "复制失败，请手动选择代码复制。");
+  assert.equal(getMarkdownCodeBlockLabels("en").copyFailed, "Copy failed. Select the code and copy it manually.");
+});
 
 test("HTML 简介判重保留代码字面量和行内元素之间的词界", () => {
   for (const [summary, content] of [

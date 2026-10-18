@@ -393,16 +393,16 @@ export function getErrorMessage(error: unknown) {
 
 export function buildFailedLinkCheckResults(
   targets: LinkCheckTarget[],
-  error: unknown
+  error: unknown,
+  localizedMessage = getErrorMessage(error)
 ): LinkCheckResult[] {
   const checkedAt = new Date().toISOString();
-  const message = getErrorMessage(error);
   return targets.map((target) => ({
     ...target,
     status: 0,
     ok: false,
     duration: 0,
     checkedAt,
-    error: message
+    error: localizedMessage
   }));
 }

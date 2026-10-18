@@ -1,6 +1,7 @@
 import { readJson, requestJsonWithTimeout } from "./api-client";
 import type {
   AdminCategorySettings,
+  CategoryIconSettings,
   Article,
   ArticleSummary,
   ProxySettings,
@@ -46,6 +47,7 @@ type PublicCategorySettingsResponse = {
     featured_total: number;
   }>;
   settings: AdminCategorySettings;
+  icons?: CategoryIconSettings;
 };
 
 export async function loadTools(options: {
@@ -118,13 +120,15 @@ export async function searchPublicArticles(query: string): Promise<ArticleSummar
   return data.articles;
 }
 
-export async function loadArticle(slug: string): Promise<Article> {
-  const response = await fetch(`/api/articles/${encodeURIComponent(slug)}`, {
-    headers: {
-      Accept: "application/json"
-    }
-  });
-  const data = await readJson<ArticleResponse>(response);
+export async function loadArticle(
+  slug: string,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {}
+): Promise<Article> {
+  const data = await requestJsonWithTimeout<ArticleResponse>(
+    `/api/articles/${encodeURIComponent(slug)}`,
+    { signal: options.signal, headers: { Accept: "application/json" } },
+    { timeoutMs: options.timeoutMs }
+  );
   return data.article;
 }
 

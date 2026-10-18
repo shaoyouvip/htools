@@ -258,23 +258,25 @@ test("controls that zero their outline still give keyboard focus a visible ring"
 
   // 同一个模式还有两处:.category-item 和 .content-source-all 都把 :hover /
   // :focus-visible / .is-active 写成同一副样子并清掉 outline,已选中时键盘聚焦零变化。
-  // 三处必须用同一份写法,否则 Tab 一圈会看到有的控件有环、有的没有。
+  // 分类图标选择及模式切换也沿用同样的描边，允许多个选择器共用一条规则。
   for (const selector of [
     ".admin-category-filter-trigger",
     ".category-item",
-    ".content-source-all"
+    ".content-source-all",
+    ".admin-category-icon-choice",
+    ".admin-segmented-toggle.admin-category-icon-mode button"
   ]) {
-    const escaped = selector.replace(".", "\\.");
-    assert.match(
-      styles,
-      new RegExp(
-        `${escaped}:focus-visible \\{\\s*outline: 2px solid var\\(--text\\);\\s*outline-offset: -3px;\\s*\\}`
-      ),
-      `${selector} 缺少统一的键盘焦点环`
-    );
-    const rule = styles.slice(styles.indexOf(`${selector}:focus-visible {`));
+    const rule = CSS_RULES.filter(({ sel }) => sel
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split(",")
+      .some((part) => part.trim() === `${selector}:focus-visible`)
+    ).at(-1);
+    assert.ok(rule, `${selector} 缺少键盘焦点规则`);
+    assert.equal(readDeclaration(rule.body, "outline"), "2px solid var(--text)",
+      `${selector} 缺少统一的键盘焦点环`);
+    assert.equal(readDeclaration(rule.body, "outline-offset"), "-3px");
     assert.doesNotMatch(
-      rule.slice(0, rule.indexOf("}")),
+      rule.body,
       /background/,
       `${selector} 的焦点规则不该动背景,只用描边`
     );
@@ -785,6 +787,10 @@ test("subscription content uses a compact list, shared actions, and the three-pa
   assert.match(cardSource, /admin-article-publish-button/);
   assert.match(cardSource, /contentText\.convert/);
   assert.match(cardSource, /contentText\.updateArticle/);
+  assert.match(
+    cardSource,
+    /\{item\.articleId \? <CheckCircle2 size=\{16\} \/> : <FileText size=\{16\} \/>\}/
+  );
   assert.match(cardSource, /contentText\.openOriginalShort/);
   assert.match(cardSource, /onClick=\{onSelect\}/);
   assert.doesNotMatch(cardSource, /window\.open\(browseHref/);

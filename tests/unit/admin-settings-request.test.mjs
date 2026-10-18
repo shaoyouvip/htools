@@ -368,10 +368,10 @@ test("settings cards abort stale loads and accept only the latest response", () 
   ]) {
     assert.match(
       cardSource,
-      /const controller = new AbortController\(\);[\s\S]*?void loadSettings\(controller\.signal\);[\s\S]*?return \(\) => controller\.abort\(\);/
+      /const controller = new AbortController\(\);[\s\S]*?void loadSettings\(controller\.signal\);[\s\S]*?controller\.abort\(\);[\s\S]*?loadRequestRef\.current \+= 1/
     );
-    assert.match(cardSource, /if \(signal\?\.aborted\) return/);
-    assert.match(cardSource, /if \(!signal\?\.aborted\) setLoading\(false\)/);
+    assert.match(cardSource, /if \(signal\?\.aborted \|\| loadRequestRef\.current !== requestId\) return/);
+    assert.match(cardSource, /if \(!signal\?\.aborted && loadRequestRef\.current === requestId\) setLoading\(false\)/);
   }
 
   assert.match(sources, /!controller\.signal\.aborted/);
@@ -405,16 +405,17 @@ test("system settings reuse the outer site, proxy and Telegram requests", () => 
 test("every readable settings area exposes the same card retry pattern", () => {
   const sources = `${adminSource}\n${settingsCardsSource}`;
 
-  assert.equal((sources.match(/className="settings-card-error" role="alert"/g) ?? []).length, 11);
-  assert.match(adminSource, /onClick=\{\(\) => void loadSiteSettingsCards\(\)\}/);
-  assert.match(adminSource, /onClick=\{\(\) => void loadSourceSettingsCard\(\)\}/);
-  assert.match(adminSource, /onClick=\{\(\) => void onReloadAdminAiSettings\(\)\}/);
-  assert.match(settingsCardsSource, /onClick=\{\(\) => void loadSettings\(\)\}/);
-  assert.match(adminSource, /onClick=\{\(\) => void loadProxySettingsCard\(\)\}/);
-  assert.match(settingsCardsSource, /onClick=\{\(\) => void onReload\(\)\}/);
+  assert.equal((sources.match(/<AdminSettingsLoadError\b/g) ?? []).length, 11);
+  assert.doesNotMatch(sources, /className="settings-card-error"/);
+  assert.match(adminSource, /onRetry=\{\(\) => void loadSiteSettingsCards\(\)\}/);
+  assert.match(adminSource, /onRetry=\{\(\) => void loadSourceSettingsCard\(\)\}/);
+  assert.match(adminSource, /onRetry=\{\(\) => void onReloadAdminAiSettings\(\)\}/);
+  assert.match(settingsCardsSource, /onRetry=\{\(\) => void loadSettings\(\)\}/);
+  assert.match(adminSource, /onRetry=\{\(\) => void loadProxySettingsCard\(\)\}/);
+  assert.match(settingsCardsSource, /onRetry=\{\(\) => void onReload\(\)\}/);
   for (const cardSource of [turnstileCardSource, umamiCardSource, securityCardSource]) {
-    assert.match(cardSource, /className="settings-card-error" role="alert"/);
-    assert.match(cardSource, /onClick=\{\(\) => void loadSettings\(\)\}/);
+    assert.match(cardSource, /<AdminSettingsLoadError\b/);
+    assert.match(cardSource, /onRetry=\{\(\) => void loadSettings\(\)\}/);
   }
   assert.match(settingsCardsSource, /setSettingsReloadKey\(\(current\) => current \+ 1\)/);
   assert.doesNotMatch(

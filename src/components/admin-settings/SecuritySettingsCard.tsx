@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { loadAdminSecuritySettings, updateAdminPassword } from "../../admin-api";
 import { formatAdminDate } from "../../admin-helpers";
 import { getLocalizedErrorMessage } from "../../site-helpers";
+import { AdminSettingsLoadError } from "../AdminPanelStates";
 import { useLoadingSkeleton } from "../../useLoadingSkeleton";
 import {
   AdminSkeletonLines,
@@ -42,7 +43,8 @@ export function SecuritySettingsCard({
   const [form, setForm] = useState(EMPTY_FORM);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [loadError, setLoadError] = useState("");
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const loadRequestRef = useRef(0);
   const [invalidField, setInvalidField] = useState<SecurityField | null>(null);
   const writeInProgressRef = useRef(false);
   const showSkeleton = useLoadingSkeleton(loading, 0);
@@ -108,23 +110,29 @@ export function SecuritySettingsCard({
   }
 
   async function loadSettings(signal?: AbortSignal) {
+    const requestId = ++loadRequestRef.current;
     setLoading(true);
-    setLoadError("");
     try {
       const loaded = await loadAdminSecuritySettings(token, { signal });
-      if (signal?.aborted) return;
+      if (signal?.aborted || loadRequestRef.current !== requestId) return;
       setSettings(loaded);
+      setLoadError(null);
     } catch (error) {
-      if (!signal?.aborted) setLoadError(getLocalizedErrorMessage(error, t));
+      if (!signal?.aborted && loadRequestRef.current === requestId) {
+        setLoadError(error);
+      }
     } finally {
-      if (!signal?.aborted) setLoading(false);
+      if (!signal?.aborted && loadRequestRef.current === requestId) setLoading(false);
     }
   }
 
   useEffect(() => {
     const controller = new AbortController();
     void loadSettings(controller.signal);
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      loadRequestRef.current += 1;
+    };
   }, [reloadKey, token]);
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -213,17 +221,15 @@ export function SecuritySettingsCard({
   }
 
   return (
-    <article className="source-public-card admin-security-card" {...getAdminLoadingProps(loading, showSkeleton)}>
-      {!loading && loadError ? (
-        <div className="settings-card-error" role="alert">
-          <h3>{maintenanceText.securityTitle}</h3>
-          <p>{loadError}</p>
-          <button className="ghost-button" type="button"
-            onClick={() => void loadSettings()}
-          >
-            {maintenanceText.systemRetry}
-          </button>
-        </div>
+    <article className="source-public-card admin-security-card" {...getAdminLoadingProps(loading && !loadError, showSkeleton)}>
+      {loadError ? (
+        <AdminSettingsLoadError
+          isRetrying={loading}
+          message={getLocalizedErrorMessage(loadError, t)}
+          onRetry={() => void loadSettings()}
+          retryLabel={maintenanceText.systemRetry}
+          title={maintenanceText.securityTitle}
+        />
       ) : (
         <>
           <div>
@@ -292,7 +298,7 @@ export function SecuritySettingsCard({
           </form>
         </>
       )}
-      <AdminSkeletonLines loading={loading} visible={showSkeleton} />
+      <AdminSkeletonLines loading={loading && !loadError} visible={showSkeleton} />
     </article>
   );
 }

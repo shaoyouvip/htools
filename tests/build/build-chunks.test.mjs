@@ -55,6 +55,31 @@ test("admin source does not reverse-import the public application", async () => 
   );
 });
 
+test("the built-in circular logo ships as a 512px PNG and is the initial favicon", async () => {
+  const logo = await readFile(new URL("../../dist/htools-logo.png", import.meta.url));
+  assert.deepEqual([...logo.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  assert.equal(logo.readUInt32BE(16), 512);
+  assert.equal(logo.readUInt32BE(20), 512);
+  const indexHtml = await readFile(new URL("../../dist/index.html", import.meta.url), "utf8");
+  assert.match(
+    indexHtml,
+    /href="\/htools-logo\.png" type="image\/png" sizes="512x512"/
+  );
+  const favicon = await readFile(new URL("../../dist/favicon.ico", import.meta.url));
+  assert.equal(favicon.readUInt16LE(0), 0);
+  assert.equal(favicon.readUInt16LE(2), 1);
+  assert.equal(favicon.readUInt16LE(4), 6);
+  const fallbackEntry = Array.from({ length: favicon.readUInt16LE(4) }, (_, index) => 6 + index * 16)
+    .find((offset) => favicon[offset] === 128 && favicon[offset + 1] === 128);
+  assert.notEqual(fallbackEntry, undefined);
+  const start = favicon.readUInt32LE(fallbackEntry + 12);
+  const length = favicon.readUInt32LE(fallbackEntry + 8);
+  const embeddedLogo = `data:image/png;base64,${favicon.subarray(start, start + length).toString("base64")}`;
+  const scripts = (await readdir(distAssets)).filter((file) => file.endsWith(".js"));
+  const builtSource = (await Promise.all(scripts.map(readAsset))).join("\n");
+  assert.ok(builtSource.includes(embeddedLogo), "the circular fallback must be bundled for failed image requests");
+});
+
 test("route-only applications stay out of the public entry chunk", async () => {
   const indexHtml = await readFile(new URL("../../dist/index.html", import.meta.url), "utf8");
   const entryMatch = indexHtml.match(/<script[^>]+src="\/assets\/(index-[^"]+\.js)"/);

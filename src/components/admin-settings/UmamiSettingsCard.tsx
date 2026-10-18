@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { loadUmamiSettings, saveUmamiSettings } from "../../admin-api";
 import { getLocalizedErrorMessage } from "../../site-helpers";
+import { AdminSettingsLoadError } from "../AdminPanelStates";
 import { useLoadingSkeleton } from "../../useLoadingSkeleton";
 import {
   hasCompleteUmamiSettings,
@@ -43,7 +44,8 @@ export function UmamiSettingsCard({
   const [form, setForm] = useState<UmamiSettings>(EMPTY_FORM);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [loadError, setLoadError] = useState("");
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const loadRequestRef = useRef(0);
   const savingRef = useRef(false);
   const showSkeleton = useLoadingSkeleton(loading, 0);
   const hasSavedConfig = hasCompleteUmamiSettings(settings ?? EMPTY_FORM);
@@ -77,23 +79,29 @@ export function UmamiSettingsCard({
   }
 
   async function loadSettings(signal?: AbortSignal) {
+    const requestId = ++loadRequestRef.current;
     setLoading(true);
-    setLoadError("");
     try {
       const loaded = await loadUmamiSettings(token, { signal });
-      if (signal?.aborted) return;
+      if (signal?.aborted || loadRequestRef.current !== requestId) return;
       applySettings(loaded);
+      setLoadError(null);
     } catch (error) {
-      if (!signal?.aborted) setLoadError(getLocalizedErrorMessage(error, t));
+      if (!signal?.aborted && loadRequestRef.current === requestId) {
+        setLoadError(error);
+      }
     } finally {
-      if (!signal?.aborted) setLoading(false);
+      if (!signal?.aborted && loadRequestRef.current === requestId) setLoading(false);
     }
   }
 
   useEffect(() => {
     const controller = new AbortController();
     void loadSettings(controller.signal);
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      loadRequestRef.current += 1;
+    };
   }, [reloadKey, token]);
   async function persist(
     nextSettings: UmamiSettings,
@@ -161,17 +169,15 @@ export function UmamiSettingsCard({
   }
 
   return (
-    <article className="source-public-card umami-settings-card" {...getAdminLoadingProps(loading, showSkeleton)}>
-      {!loading && loadError ? (
-        <div className="settings-card-error" role="alert">
-          <h3>{maintenanceText.umamiTitle}</h3>
-          <p>{loadError}</p>
-          <button className="ghost-button" type="button"
-            onClick={() => void loadSettings()}
-          >
-            {maintenanceText.systemRetry}
-          </button>
-        </div>
+    <article className="source-public-card umami-settings-card" {...getAdminLoadingProps(loading && !loadError, showSkeleton)}>
+      {loadError ? (
+        <AdminSettingsLoadError
+          isRetrying={loading}
+          message={getLocalizedErrorMessage(loadError, t)}
+          onRetry={() => void loadSettings()}
+          retryLabel={maintenanceText.systemRetry}
+          title={maintenanceText.umamiTitle}
+        />
       ) : (
         <>
           <div className="source-card-heading">
@@ -237,7 +243,7 @@ export function UmamiSettingsCard({
           </form>
         </>
       )}
-      <AdminSkeletonLines loading={loading} visible={showSkeleton} />
+      <AdminSkeletonLines loading={loading && !loadError} visible={showSkeleton} />
     </article>
   );
 }

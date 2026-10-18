@@ -28,16 +28,26 @@ const articleHelpers = await compile("article-helpers.ts", {
   "./i18n": i18nUrl
 });
 const toolHelpers = await compile("tool-helpers.ts", { "./admin-helpers": adminHelpers });
+const categoryIconUrl = await compile("components/CategoryIcon.tsx", {
+  "react": import.meta.resolve("react"),
+  "react/jsx-runtime": import.meta.resolve("react/jsx-runtime"),
+  "lucide-react": import.meta.resolve("lucide-react"),
+  "../article-helpers": articleHelpers
+}, (source) => ts.transpileModule(source, {
+  fileName: "CategoryIcon.tsx",
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX }
+}).outputText);
 const controlsUrl = await compile("components/PublicDirectoryControls.tsx", {
   "react/jsx-runtime": import.meta.resolve("react/jsx-runtime"),
   "lucide-react": import.meta.resolve("lucide-react"),
-  "../article-helpers": articleHelpers,
+  "./CategoryIcon": categoryIconUrl,
   "../tool-helpers": toolHelpers
 }, (source) => ts.transpileModule(source, {
   fileName: "PublicDirectoryControls.tsx",
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX }
 }).outputText);
 const { CategoryRail, DirectoryPagination } = await import(controlsUrl);
+const { CategoryIcon } = await import(categoryIconUrl);
 const { translations } = await import(i18nUrl);
 const defaults = {
   currentPage: 1, totalPages: 10, hasNextPage: true, isLoading: false,
@@ -98,7 +108,7 @@ for (const [locale, labels] of [
 test("公共分类栏保留分类标签、选中状态与回调原值", () => {
   const selected = [];
   const rail = CategoryRail({
-    activeCategory: "All", categories: ["All", "自定义分类"], isLoading: false,
+    activeCategory: "All", categories: ["All", "自定义分类"], categoryIcons: {}, isLoading: false,
     onSelect: (value) => selected.push(value), showSkeletons: false, skeletonItems: 12,
     t: translations.zh
   });
@@ -111,9 +121,49 @@ test("公共分类栏保留分类标签、选中状态与回调原值", () => {
   assert.ok(html.includes("自定义分类"));
 });
 
+test("分类图标覆盖只影响指定分类，未设置与无效设置继续回退", () => {
+  const html = renderToStaticMarkup(createElement(CategoryRail, {
+    activeCategory: "All", categories: ["All", "自定义分类", "Database", "其他分类"],
+    categoryIcons: {
+      "自定义分类": { type: "lucide", value: "folder" },
+      Database: { type: "lucide", value: "invalid-icon" }
+    },
+    isLoading: false, onSelect() {}, showSkeletons: false, skeletonItems: 12,
+    t: translations.zh
+  }));
+  assert.equal((html.match(/lucide-folder\b/g) ?? []).length, 1);
+  assert.equal((html.match(/lucide-database\b/g) ?? []).length, 1);
+  assert.equal((html.match(/lucide-tags\b/g) ?? []).length, 1);
+  assert.equal((html.match(/class="category-icon"/g) ?? []).length, 4);
+});
+
+test("与对象属性重名的自建分类仍显示原名和默认标签图标", () => {
+  const names = ["constructor", "toString", "__proto__"];
+  const html = renderToStaticMarkup(createElement(CategoryRail, {
+    activeCategory: "All", categories: names, categoryIcons: {},
+    isLoading: false, onSelect() {}, showSkeletons: false, skeletonItems: 12,
+    t: translations.zh
+  }));
+  for (const name of names) assert.ok(html.includes(`>${name}</span>`), name);
+  assert.equal((html.match(/lucide-tags\b/g) ?? []).length, names.length);
+});
+
+for (const [category, expectedIcon] of [
+  ["__telegram_tool__", "wrench"],
+  ["__telegram_article__", "file-text"],
+  ["__telegram_content__", "rss"]
+]) {
+  test(`消息推送固定来源 ${category} 使用对应入口图标 ${expectedIcon}`, () => {
+    const html = renderToStaticMarkup(createElement(CategoryIcon, { category, size: 16 }));
+    assert.match(html, new RegExp(`lucide-${expectedIcon}(?:\\s|\")`));
+    assert.doesNotMatch(html, /lucide-tags(?:\s|")/);
+    assert.match(html, /width="16" height="16"/);
+  });
+}
+
 test("分类骨架继续按页面指定数量显示，延迟显示期间不闪现分类按钮", () => {
   const props = {
-    activeCategory: "All", categories: ["All"], isLoading: true, onSelect() {},
+    activeCategory: "All", categories: ["All"], categoryIcons: {}, isLoading: true, onSelect() {},
     showSkeletons: true, t: translations.zh
   };
   for (const skeletonItems of [6, 12]) {

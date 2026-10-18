@@ -1,11 +1,13 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { getCategoryIcon } from "../article-helpers";
+import type { CategoryIcon as CategoryIconValue } from "../category-icon-settings";
+import { CategoryIcon } from "./CategoryIcon";
 import type { Messages } from "../i18n";
 import { getCategoryLabel } from "../tool-helpers";
 
 export function CategoryRail({
   activeCategory,
   categories,
+  categoryIcons,
   isLoading,
   onSelect,
   showSkeletons,
@@ -14,6 +16,7 @@ export function CategoryRail({
 }: {
   activeCategory: string;
   categories: string[];
+  categoryIcons: Record<string, CategoryIconValue>;
   isLoading: boolean;
   onSelect: (category: string) => void;
   showSkeletons: boolean;
@@ -34,7 +37,6 @@ export function CategoryRail({
         ) : null
       ) : (
         categories.map((category) => {
-          const Icon = getCategoryIcon(category);
           return (
             <button
               aria-pressed={category === activeCategory}
@@ -43,7 +45,7 @@ export function CategoryRail({
               type="button"
               onClick={() => onSelect(category)}
             >
-              <Icon aria-hidden="true" size={20} />
+              <CategoryIcon category={category} icon={categoryIcons[category]} size={20} />
               <span>{getCategoryLabel(category, t)}</span>
             </button>
           );
